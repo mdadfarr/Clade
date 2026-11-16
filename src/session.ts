@@ -17,6 +17,8 @@ export interface Reply {
   forkUuid: string | null; // where Branch cuts: the last chained entry of this reply (null while working)
   text: string; // Claude's real text in this reply (notices left out)
   copy: string; // text with {c= s=} tags removed, for Copy
+  label: string; // from Claude's {label=...} tag, else the reply's first three words
+  created: string; // timestamp of the user message
 }
 
 export interface Chat {
@@ -30,6 +32,26 @@ export interface Chat {
 }
 
 const CHAINED = ['user', 'assistant', 'system', 'attachment'];
+
+const LABEL = /\{label=([^{}\n]*)\}/g;
+
+/** Remove {label=...} tags. Returns the text without them and the last label found ('' if none). */
+export function takeLabel(s: string): { text: string; label: string } {
+  let label = '';
+  const text = s
+    .replace(LABEL, (_m, l: string) => {
+      label = l.trim() || label;
+      return '';
+    })
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { text, label };
+}
+
+export function firstWordsOf(s: string, n: number): string {
+  return s.replace(/[#*`>$_{}\[\]()|~-]/g, ' ').split(/\s+/).filter(Boolean).slice(0, n).join(' ');
+}
 
 /** {c=#fff s=1.4}text{/} -> text. LaTeX and everything else stay as written. */
 export function stripStyleTags(s: string): string {
@@ -60,7 +82,8 @@ export function parseSession(text: string, stopUuid?: string): Chat {
       if (!chat.created && typeof d.timestamp === 'string') chat.created = d.timestamp;
       const content = d.message?.content;
       const blocks: any[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
-      const said = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim();
+      const raw = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim();
+      const { text: said, label } = d.type === 'assistant' ? takeLabel(raw) : { text: raw, label: '' };
       const reply = replies.length ? replies.length - 1 : undefined;
 
       if (d.type === 'user') {
@@ -73,7 +96,8 @@ export function parseSession(text: string, stopUuid?: string): Chat {
           } else {
             const parent = typeof d.parentUuid === 'string' ? d.parentUuid : null;
             if (replies.length) replies[replies.length - 1].forkUuid = parent;
-            replies.push({ id: uuid ?? '', userText: said, first: !replies.length, retryCut: replies.length ? parent : null, forkUuid: null, text: '', copy: '' });
+            const created = typeof d.timestamp === 'string' ? d.timestamp : '';
+            replies.push({ id: uuid ?? '', userText: said, first: !replies.length, retryCut: replies.length ? parent : null, forkUuid: null, text: '', copy: '', label: '', created });
             items.push({ role: 'user', text: said, uuid });
             if (!chat.first) chat.first = said;
             chat.working = true;
@@ -85,6 +109,7 @@ export function parseSession(text: string, stopUuid?: string): Chat {
           items.push({ role: 'claude', text: said, uuid, reply });
           if (reply !== undefined) replies[reply].text += (replies[reply].text ? '\n\n' : '') + said;
         }
+        if (label && reply !== undefined) replies[reply].label = label;
         const tools = blocks.filter((b) => b?.type === 'tool_use').map((b) => String(b.name));
         if (tools.length) {
           const last = items[items.length - 1];
@@ -92,14 +117,17 @@ export function parseSession(text: string, stopUuid?: string): Chat {
           else items.push({ role: 'tool', text: 'Tools: ' + tools.join(', '), reply });
         }
         const stop = d.message?.stop_reason;
-        chat.working = stop ? stop === 'tool_use' : tools.length > 0 || !said;
+        chat.working = stop ? stop === 'tool_use' : tools.length > 0 || !raw;
       }
     }
     if (stopUuid && uuid === stopUuid) break;
   }
   const last = replies[replies.length - 1];
   if (last && !chat.working) last.forkUuid = chat.lastAny;
-  for (const r of replies) r.copy = stripStyleTags(r.text);
+  for (const r of replies) {
+    r.copy = stripStyleTags(r.text);
+    if (!r.label) r.label = firstWordsOf(r.copy, 3);
+  }
   return chat;
 }
 
