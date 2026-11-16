@@ -1,10 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu } from 'electron';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as pty from 'node-pty';
 import { DEFAULT_DESIGN, Design, parseDesign } from './design';
-import { Chat, parseSession } from './session';
+import { Chat, cutSession, parseSession } from './session';
 import { Branch, firstWords, parseBranches, UUID } from './branches';
 import { randomUUID } from 'crypto';
 
@@ -126,7 +126,8 @@ function reset(): void {
   }
 }
 
-// ---- sessions and branches. Session files are only read, never written. ----
+// ---- sessions and branches. Existing session files are only read, never written. A branch is a new
+// file (cut from its parent at the fork point), created once and then left to claude. ----
 const sessionDir = () => path.join(os.homedir(), '.claude', 'projects', fs.realpathSync(folder).replace(/[^a-zA-Z0-9]/g, '-'));
 const sessionFile = (id: string) => path.join(sessionDir(), `${id}.jsonl`);
 const branchesFile = () => path.join(folder, 'branches.json');
@@ -172,27 +173,39 @@ let sessionId = ''; // the session shown in the chat and running in the terminal
 let currentChat: Chat | null = null; // that session's own file, or null if it has no file yet
 let chatKey = '';
 let treeKey = '';
+// A Retry waiting to type its one message into the new branch. Only set by a Retry click.
+let pending: { id: string; stage: 'waiting' | 'sent'; count: number } | null = null;
 
 const textOf = (chat: Chat, uuid: string) => chat.items.find((i) => i.uuid === uuid)?.text;
+const isRetry = (b: Branch) => b.forkWords.startsWith('retry: ');
 
 function pollSession(): void {
   if (!sessionId || !win) return;
   try {
-    // 1. Chat of the current session. An empty branch shows its parent up to the fork point.
+    // 1. Chat of the current session.
     const branch = branches.find((b) => b.id === sessionId);
     const ownKey = statKey(sessionFile(sessionId));
-    const key = `${sessionId}|${ownKey}|${ownKey ? '' : branch ? statKey(sessionFile(branch.parent)) : ''}`;
+    const key = `${sessionId}|${ownKey}|${ownKey ? '' : branch ? statKey(sessionFile(branch.parent)) : ''}|${pending?.stage ?? ''}`;
     if (key !== chatKey) {
       chatKey = key;
       currentChat = readSession(sessionId);
+      if (pending && (pending.id !== sessionId || (pending.stage === 'sent' && (currentChat?.replies.length ?? 0) > pending.count))) {
+        pending = null;
+        chatKey = ''; // send once more without the pending flag
+      }
       let shown = currentChat;
-      if (!shown && branch) {
+      let empty = !!(currentChat && branch && currentChat.lastAny === branch.forkUuid);
+      if (!shown && branch?.forkUuid) {
+        // a branch made with --fork-session before cut files: show the parent up to the fork point
         const parentText = fs.existsSync(sessionFile(branch.parent)) ? fs.readFileSync(sessionFile(branch.parent), 'utf8') : '';
         shown = { ...parseSession(parentText, branch.forkUuid), working: false };
-        shown.items.push({ role: 'tool', text: 'Empty branch: messages up to the fork point. Send a message to start it.' });
+        empty = true;
       }
-      const canBranch = !!currentChat?.lastUuid;
-      win.webContents.send('chat', { items: shown?.items ?? [], working: shown?.working ?? false, canBranch });
+      const items = [...(shown?.items ?? [])];
+      if (empty && !pending) items.push({ role: 'tool', text: 'Empty branch: messages up to the fork point. Send a message to start it.' });
+      const replies = (currentChat?.replies ?? []).map((r) => ({ id: r.id, copy: r.copy, branch: !!r.forkUuid, retry: r.first || !!r.retryCut }));
+      const canBranch = !!currentChat?.replies.at(-1)?.forkUuid;
+      win.webContents.send('chat', { items, replies, working: (shown?.working ?? false) || !!pending, canBranch });
     }
 
     // 2. Tree: branches.json plus every session file in the project's session folder.
@@ -205,13 +218,16 @@ function pollSession(): void {
     const nodes: { id: string; parent: string | null; label: string; full: string; created: string; empty: boolean }[] = [];
     for (const b of branches) {
       const parent = readSession(b.parent);
+      const own = ids.has(b.id) ? readSession(b.id) : null;
+      const empty = !own || own.lastAny === b.forkUuid; // a cut file with nothing sent yet is still empty
+      const reply = parent?.replies.find((r) => r.forkUuid === b.forkUuid);
       nodes.push({
         id: b.id,
         parent: b.parent,
-        label: ids.has(b.id) ? b.forkWords : 'empty branch',
-        full: (parent && textOf(parent, b.forkUuid)) || b.forkWords,
+        label: empty ? 'empty branch' : b.forkWords,
+        full: isRetry(b) ? b.forkWords : (parent && (reply?.text || textOf(parent, b.forkUuid))) || b.forkWords,
         created: b.created,
-        empty: !ids.has(b.id),
+        empty,
       });
     }
     for (const id of ids) {
@@ -230,7 +246,7 @@ function pollSession(): void {
   }
 }
 
-// Start claude for a session. Only called from the user's own actions (app start, Branch, node click).
+// Start claude for a session. Only called from the user's own actions (app start, Branch, Retry, node click).
 let size = { cols: 80, rows: 10 };
 function runClaude(id: string, args: string[]): void {
   const old = term;
@@ -257,8 +273,73 @@ function runClaude(id: string, args: string[]): void {
 function openSession(id: string): void {
   const branch = branches.find((b) => b.id === id);
   if (fs.existsSync(sessionFile(id))) runClaude(id, ['--resume', id]);
-  else if (branch) runClaude(id, ['--session-id', id, '--resume', branch.parent, '--fork-session']);
-  else runClaude(id, ['--session-id', id]);
+  else if (branch?.forkUuid) runClaude(id, ['--session-id', id, '--resume', branch.parent, '--fork-session']); // made before cut files
+  else runClaude(id, ['--session-id', id]); // new session, or a Retry of a first reply
+}
+
+/** New branch of `parent` ending at forkUuid (null: a fresh session). Saved in branches.json, then opened. */
+function newBranch(parent: string, forkUuid: string | null, words: string): string | null {
+  const id = randomUUID();
+  if (forkUuid) {
+    try {
+      const cut = cutSession(fs.readFileSync(sessionFile(parent), 'utf8'), forkUuid, id);
+      fs.writeFileSync(sessionFile(id), cut, { flag: 'wx', mode: 0o600 }); // a new file; never overwrites
+    } catch (e) {
+      win?.webContents.send('note', `Could not make the branch: ${(e as Error).message}`);
+      return null;
+    }
+  }
+  loadBranches();
+  branches.push({ id, parent, forkUuid: forkUuid ?? '', forkWords: words, created: new Date().toISOString() });
+  saveBranches();
+  runClaude(id, forkUuid ? ['--resume', id] : ['--session-id', id]);
+  return id;
+}
+
+/** Type text into claude and press Enter. Only for the user's own Enter or Retry click. */
+function typeText(text: string): void {
+  const t = term;
+  if (!t) return;
+  t.write(text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text); // several lines go in as one paste
+  setTimeout(() => term === t && t.write('\r'), 150); // separate write, so claude does not treat Enter as pasted text
+}
+
+const plain = (s: string) => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, ' ').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '');
+
+/** Retry: once the new claude is idle, type its one message. If claude shows a question or never
+ *  settles, nothing is sent; the message goes into the chat box for the user to send. */
+function typeWhenReady(p: pty.IPty, text: string): void {
+  let seen = '';
+  let quiet: NodeJS.Timeout | undefined;
+  const started = Date.now();
+  const finish = (ready: boolean) => {
+    data.dispose();
+    exit.dispose();
+    clearTimeout(quiet);
+    clearTimeout(limit);
+    if (term !== p || !pending || pending.stage !== 'waiting') return;
+    chatKey = '';
+    if (ready && !/Enter to confirm|Esc to cancel/.test(plain(seen))) {
+      typeText(text);
+      const sent = pending;
+      sent.stage = 'sent';
+      setTimeout(() => {
+        if (pending !== sent) return;
+        pending = null; // the message never showed up in the file
+        chatKey = '';
+      }, 60000);
+    } else {
+      pending = null;
+      win?.webContents.send('prefill', text);
+    }
+  };
+  const data = p.onData((d) => {
+    seen = (seen + d).slice(-8000);
+    clearTimeout(quiet);
+    quiet = setTimeout(() => finish(true), Math.max(1500, 3000 - (Date.now() - started)));
+  });
+  const exit = p.onExit(() => finish(false));
+  const limit = setTimeout(() => finish(false), 30000);
 }
 
 async function chooseFolder(): Promise<string | null> {
@@ -324,31 +405,38 @@ app.whenReady().then(async () => {
     runClaude(id, ['--session-id', id]);
   });
 
-  // Branch button (user click only): fork the current session at its last message.
-  ipcMain.on('branch', () => {
-    const parent = sessionId;
-    const chat = readSession(parent);
-    if (!chat?.lastUuid || chat.working) return;
-    loadBranches();
-    const id = randomUUID();
-    const forkText = textOf(chat, chat.lastUuid) ?? chat.items.filter((i) => i.role !== 'tool').at(-1)?.text ?? '';
-    branches.push({ id, parent, forkUuid: chat.lastUuid, forkWords: firstWords(forkText) || '(fork)', created: new Date().toISOString() });
-    saveBranches(); // saved now, before any message is sent
-    runClaude(id, ['--session-id', id, '--resume', parent, '--fork-session']);
+  // Branch (user click only): new branch ending at that reply (no id: the newest reply).
+  ipcMain.on('branch', (_e, replyId?: unknown) => {
+    const chat = readSession(sessionId);
+    if (!chat || chat.working || pending) return;
+    const r = typeof replyId === 'string' ? chat.replies.find((x) => x.id === replyId) : chat.replies.at(-1);
+    if (r?.forkUuid) newBranch(sessionId, r.forkUuid, firstWords(r.text) || '(fork)');
   });
+
+  // Retry (user click only): new branch ending right before that reply, then send its user message once.
+  ipcMain.on('retry', (_e, replyId: unknown) => {
+    const chat = readSession(sessionId);
+    if (!chat || chat.working || pending || typeof replyId !== 'string') return;
+    const r = chat.replies.find((x) => x.id === replyId);
+    if (!r?.text || (!r.first && !r.retryCut)) return;
+    const id = newBranch(sessionId, r.first ? null : r.retryCut, 'retry: ' + firstWords(r.userText));
+    if (!id || !term) return;
+    pending = { id, stage: 'waiting', count: chat.replies.indexOf(r) };
+    typeWhenReady(term, r.userText);
+  });
+
+  // Copy (user click only): the reply text, already stripped of style tags.
+  ipcMain.on('copy', (_e, text: unknown) => typeof text === 'string' && clipboard.writeText(text));
 
   // Tree node click (user click only): switch to that session.
   ipcMain.on('open-session', (_e, id: string) => {
-    if (typeof id !== 'string' || !UUID.test(id) || id === sessionId || currentChat?.working) return;
+    if (typeof id !== 'string' || !UUID.test(id) || id === sessionId || currentChat?.working || pending) return;
     loadBranches();
     openSession(id);
   });
   ipcMain.on('pty-write', (_e, d: string) => term?.write(d)); // only what the user types
   // Chat text box: type the user's text into the terminal, then press Enter. Only on the user's Enter.
-  ipcMain.on('chat-send', (_e, text: string) => {
-    term?.write(text);
-    setTimeout(() => term?.write('\r'), 150); // separate write, so claude does not treat Enter as pasted text
-  });
+  ipcMain.on('chat-send', (_e, text: unknown) => typeof text === 'string' && typeText(text));
   setInterval(pollSession, 300);
   ipcMain.on('pty-resize', (_e, cols: number, rows: number) => {
     size = { cols, rows };

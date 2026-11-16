@@ -9,13 +9,23 @@ declare const api: {
   send(text: string): void;
   onData(cb: (data: string) => void): void;
   onDesign(cb: (design: any, error: string | null) => void): void;
-  onChat(cb: (chat: { items: { role: string; text: string }[]; working: boolean }) => void): void;
+  onChat(cb: (chat: ChatView) => void): void;
   onToggleTerm(cb: () => void): void;
-  branch(): void;
+  branch(replyId?: string): void;
+  retry(replyId: string): void;
+  copy(text: string): void;
+  onNote(cb: (text: string) => void): void;
+  onPrefill(cb: (text: string) => void): void;
   openSession(id: string): void;
   onTree(cb: (tree: Tree) => void): void;
   onTermReset(cb: () => void): void;
 };
+interface ChatView {
+  items: { role: string; text: string; reply?: number }[];
+  replies?: { id: string; copy: string; branch: boolean; retry: boolean }[];
+  working: boolean;
+  canBranch?: boolean;
+}
 interface TreeNode {
   id: string;
   parent: string | null;
@@ -173,7 +183,7 @@ function markdown(parent: HTMLElement, src: string, bg: RGB): void {
 
 // ---- chat view ----
 const messages = byId('messages');
-let chat: { items: { role: string; text: string }[]; working: boolean; canBranch?: boolean } = { items: [], working: false };
+let chat: ChatView = { items: [], working: false };
 let sent = false; // the user just pressed Enter and the session file has not caught up yet
 let stick = true; // keep the newest message in view unless the user scrolled up
 
@@ -190,17 +200,61 @@ function renderChat(): void {
   const col = byId('items');
   const keep = stick;
   col.replaceChildren();
-  for (const item of chat.items) {
-    const box = add(col, 'div', item.role);
+  // Claude's side of each exchange goes in one .reply box, with the action row under its last item.
+  const groups = new Map<number, HTMLElement>();
+  const lastOf = new Map<number, number>();
+  chat.items.forEach((item, i) => item.reply !== undefined && lastOf.set(item.reply, i));
+  chat.items.forEach((item, i) => {
+    let parent = col;
+    if (item.reply !== undefined) {
+      if (!groups.has(item.reply)) groups.set(item.reply, add(col, 'div', 'reply'));
+      parent = groups.get(item.reply)!;
+    }
+    const box = add(parent, 'div', item.role);
     if (item.role === 'claude') {
       const bg = (getComputedStyle(box).backgroundColor.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
       markdown(box, item.text, (bg.length === 3 ? bg : [0, 0, 0]) as RGB);
     } else box.textContent = item.text;
-  }
+    if (item.reply !== undefined && lastOf.get(item.reply) === i) actions(parent, item.reply);
+  });
   byId('working').hidden = !busy();
   stick = keep;
   toBottom();
   renderTree();
+}
+
+// ---- Copy / Retry / Branch under a reply. Clicks only ask the main process, which re-checks everything. ----
+const circle = (cx: number, cy: number, r: number) => `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`;
+const ICONS: Record<string, string[]> = {
+  copy: ['M5.5 5.5h7v8h-7z', 'M3.5 10.5v-8h7'],
+  retry: ['M13 8a5 5 0 1 1-1.6-3.7', 'M13 2v3h-3'],
+  branch: [circle(4.5, 3, 1.5), circle(4.5, 13, 1.5), circle(11.5, 5, 1.5), 'M4.5 4.5v7', 'M11.5 6.5c0 3-7 2.5-7 5'],
+};
+
+function iconButton(row: HTMLElement, icon: string, tip: string, off: string, onClick: (b: HTMLElement) => void): void {
+  const b = add(row, 'button', 'act');
+  b.setAttribute('aria-label', icon);
+  b.setAttribute('aria-disabled', String(!!off)); // not "disabled", so the tooltip still shows on hover
+  b.title = off || tip;
+  const s = svg(b, 'svg', { viewBox: '0 0 16 16', width: 15, height: 15 });
+  for (const d of ICONS[icon]) svg(s, 'path', { d, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+  b.addEventListener('click', () => {
+    if (b.getAttribute('aria-disabled') !== 'true' && !busy()) onClick(b);
+  });
+}
+
+function actions(parent: HTMLElement, k: number): void {
+  const r = chat.replies?.[k];
+  if (!r?.copy) return; // no text of Claude's own (e.g. only a usage-limit notice): no buttons
+  const row = add(parent, 'div', 'actions' + (k === chat.replies!.length - 1 ? ' newest' : ''));
+  const why = busy() ? 'Disabled while Claude is working' : '';
+  iconButton(row, 'copy', 'Copy', why, (b) => {
+    api.copy(r.copy);
+    b.title = 'Copied';
+    b.classList.add('done');
+  });
+  iconButton(row, 'retry', 'Retry: new branch without this reply, then send your message again', why || (r.retry ? '' : 'Retry is not possible here'), () => api.retry(r.id));
+  iconButton(row, 'branch', 'Branch: new branch that ends at this reply', why || (r.branch ? '' : 'Branch is not possible here'), () => api.branch(r.id));
 }
 
 // ---- branch tree (SVG). Clicks only ask the main process to switch; it re-checks everything. ----
@@ -267,6 +321,21 @@ api.onTree((t) => {
 });
 byId('branch').addEventListener('click', () => {
   if (!busy() && chat.canBranch) api.branch();
+});
+
+const note = byId('note');
+let noteTimer: number | undefined;
+function showNote(text: string, ms: number): void {
+  note.textContent = text;
+  note.hidden = false;
+  clearTimeout(noteTimer);
+  noteTimer = window.setTimeout(() => (note.hidden = true), ms);
+}
+api.onNote((t) => showNote(t, 10000));
+api.onPrefill((t) => {
+  input.value = t; // never sent by the app: the user presses Enter
+  input.focus();
+  showNote('Retry: Claude was not ready, so nothing was sent. Your message is in the box below. Press Enter to send it.', 20000);
 });
 
 api.onChat((c) => {

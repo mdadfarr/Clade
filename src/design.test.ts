@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
 import { DEFAULT_DESIGN, parseDesign } from './design';
-import { parseSession } from './session';
+import { cutSession, parseSession, stripStyleTags } from './session';
 
 const good = {
   terminal: { background: '#002200', textColor: '#ffffff', fontSize: 14 },
@@ -115,4 +115,63 @@ test('branches: broken files throw', () => {
 test('firstWords', () => {
   assert.strictEqual(firstWords('one two\nthree four five six seven'), 'one two three four five six …');
   assert.strictEqual(firstWords('short'), 'short');
+});
+
+// A session like the real ones: attachments and system lines sit in the parentUuid chain.
+const S = 'b1f19e27-d806-45a6-9f1e-0431632c9776';
+const e = (type: string, uuid: string, parentUuid: string | null, extra: object = {}) => line({ type, uuid, parentUuid, sessionId: S, ...extra });
+const said = (t: string) => ({ message: { content: t } });
+const ans = (t: string, stop = 'end_turn') => ({ message: { stop_reason: stop, content: [{ type: 'text', text: t }] } });
+const real = [
+  e('attachment', 'h0', null),
+  e('user', 'u1', 'h0', said('one')),
+  e('assistant', 'a1', 'u1', ans('{c=#e8a33d s=1.4}OK{/} $x^2$')),
+  e('system', 's1', 'a1'),
+  e('user', 'u2', 's1', said('two')),
+  e('assistant', 't2', 'u2', { message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'Read' }] } }),
+  e('user', 'r2', 't2', { message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'file' }] } }),
+  e('assistant', 'a2', 'r2', ans('Zebra')),
+  e('system', 's2', 'a2'),
+  line({ type: 'file-history-snapshot', messageId: 'x' }),
+  e('user', 'u3', 's2', said('three')),
+  e('assistant', 'a3', 'u3', { ...ans("You've hit your 5-hour limit", 'stop_sequence'), message: { model: '<synthetic>', stop_reason: 'stop_sequence', content: [{ type: 'text', text: "You've hit your 5-hour limit" }] } }),
+  e('system', 's3', 'a3'),
+].join('\n');
+
+test('session: replies, fork points, notices', () => {
+  const c = parseSession(real);
+  assert.deepStrictEqual(
+    c.replies.map((r) => [r.id, r.userText, r.first, r.retryCut, r.forkUuid, r.text]),
+    [
+      ['u1', 'one', true, null, 's1', '{c=#e8a33d s=1.4}OK{/} $x^2$'],
+      ['u2', 'two', false, 's1', 's2', 'Zebra'],
+      ['u3', 'three', false, 's2', 's3', ''],
+    ],
+  );
+  assert.strictEqual(c.replies[0].copy, 'OK $x^2$');
+  assert.deepStrictEqual(c.items.at(-1), { role: 'notice', text: "You've hit your 5-hour limit", uuid: 'a3', reply: 2 });
+  assert.deepStrictEqual(c.items.filter((i) => i.role === 'tool').map((i) => i.reply), [1]);
+  assert.strictEqual(c.lastAny, 's3');
+  const working = parseSession(real.split('\n').slice(0, 6).join('\n'));
+  assert.strictEqual(working.replies[1].forkUuid, null); // no Branch while the turn runs
+});
+
+test('cut: keeps the chain only, rewrites the session id', () => {
+  const N = '33333333-3333-4333-8333-333333333333';
+  const out = cutSession(real, 's2', N).trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual(out.map((d) => d.uuid), ['h0', 'u1', 'a1', 's1', 'u2', 't2', 'r2', 'a2', 's2']);
+  assert.ok(out.every((d) => d.sessionId === N));
+  const c = parseSession(cutSession(real, 's1', N));
+  assert.deepStrictEqual(c.items.map((i) => i.text), ['one', '{c=#e8a33d s=1.4}OK{/} $x^2$']);
+  assert.strictEqual(c.lastAny, 's1');
+});
+
+test('cut: never between a tool call and its result', () => {
+  assert.throws(() => cutSession(real, 't2', A), /between a tool call and its result/);
+  assert.throws(() => cutSession(real, 'nope', A), /not found/);
+  assert.throws(() => cutSession([e('user', 'u1', 'gone', said('x'))].join('\n'), 'u1', A), /missing/);
+});
+
+test('stripStyleTags keeps LaTeX and plain braces', () => {
+  assert.strictEqual(stripStyleTags('{c=#fff}a{/} {s=2}b{/} $\\frac{1}{2}$ {x}'), 'a b $\\frac{1}{2}$ {x}');
 });
