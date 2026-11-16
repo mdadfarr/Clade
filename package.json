@@ -7,7 +7,7 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper",
     "build": "tsc",
     "start": "tsc && electron .",
-    "test": "tsc && node --test dist/design.test.js"
+    "test": "tsc && node --test dist/design.test.js dist/cards.test.js dist/graph.test.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
