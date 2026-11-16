@@ -23,6 +23,8 @@ const good = {
   body: { size: 15 },
   bold: { color: '#ffaa00' },
   code: { background: '#000000' },
+  timer: { track: '#222222', fill: 'silver', urgent: 'brown' },
+  graph: { node: '#333333', line: 'grey', current: '#555555', label: 'white' },
 };
 const bad = (change: (d: any) => void, pattern: RegExp) => {
   const d = structuredClone(good);

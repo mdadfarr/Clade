@@ -11,32 +11,56 @@ declare const api: {
   onDesign(cb: (design: any, error: string | null) => void): void;
   onChat(cb: (chat: ChatView) => void): void;
   onToggleTerm(cb: () => void): void;
-  branch(replyId?: string): void;
+  branch(replyId?: string, from?: string): void;
   retry(replyId: string): void;
   copy(text: string): void;
   onNote(cb: (text: string) => void): void;
   onPrefill(cb: (text: string) => void): void;
   openSession(id: string): void;
-  onTree(cb: (tree: Tree) => void): void;
+  onGraph(cb: (graph: GraphData) => void): void;
+  onToggleGraph(cb: () => void): void;
   onTermReset(cb: () => void): void;
+  onCards(cb: (cards: Card[]) => void): void;
+  onShowTerm(cb: (why: string) => void): void;
+  answerCard(id: string, answer: object): void;
 };
+interface Card {
+  id: string;
+  session: string;
+  kind: 'permission' | 'question';
+  tool: string;
+  title: string;
+  targetLabel: string;
+  target: string;
+  note: string;
+  preview: { kind: 'text' | 'diff' | 'json'; text: string }[];
+  rules: { label: string; destination: string }[];
+  questions: { question: string; header: string; options: { label: string; description: string }[]; multiSelect: boolean }[];
+  arrived: number;
+  expires: number;
+  expired: boolean;
+}
 interface ChatView {
   items: { role: string; text: string; reply?: number }[];
   replies?: { id: string; copy: string; branch: boolean; retry: boolean }[];
   working: boolean;
   canBranch?: boolean;
 }
-interface TreeNode {
+interface GNode {
   id: string;
+  session: string;
+  reply: string;
   parent: string | null;
   label: string;
-  full: string;
-  created: string;
-  empty: boolean;
+  first: string;
+  canBranch: boolean;
+  x: number; // column
+  y: number; // row
 }
-interface Tree {
-  nodes: TreeNode[];
-  current: string;
+interface GraphData {
+  nodes: GNode[];
+  current: string | null;
+  session: string;
   error: string | null;
 }
 
@@ -61,9 +85,17 @@ function refit(): void {
 }
 window.addEventListener('resize', refit);
 api.onTermReset(() => term.reset());
-api.onToggleTerm(() => {
-  document.body.classList.toggle('bigterm');
+// Hidden by default; Cmd+J (or anything unclear) shows it.
+function showTerm(on: boolean): void {
+  document.body.classList.toggle('showterm', on);
   refit();
+  if (on) term.focus();
+  else (byId('input') as HTMLInputElement).focus();
+}
+api.onToggleTerm(() => showTerm(!document.body.classList.contains('showterm')));
+api.onShowTerm((why) => {
+  showTerm(true);
+  showNote(why, 10000);
 });
 
 // ---- chat text. Parsed here into DOM nodes; nothing from Claude is ever used as HTML or run. ----
@@ -207,7 +239,11 @@ function renderChat(): void {
   chat.items.forEach((item, i) => {
     let parent = col;
     if (item.reply !== undefined) {
-      if (!groups.has(item.reply)) groups.set(item.reply, add(col, 'div', 'reply'));
+      if (!groups.has(item.reply)) {
+        const g = add(col, 'div', 'reply');
+        g.dataset.reply = chat.replies?.[item.reply]?.id ?? '';
+        groups.set(item.reply, g);
+      }
       parent = groups.get(item.reply)!;
     }
     const box = add(parent, 'div', item.role);
@@ -220,7 +256,8 @@ function renderChat(): void {
   byId('working').hidden = !busy();
   stick = keep;
   toBottom();
-  renderTree();
+  scrollToReply();
+  renderToolbar();
 }
 
 // ---- Copy / Retry / Branch under a reply. Clicks only ask the main process, which re-checks everything. ----
@@ -257,9 +294,9 @@ function actions(parent: HTMLElement, k: number): void {
   iconButton(row, 'branch', 'Branch: new branch that ends at this reply', why || (r.branch ? '' : 'Branch is not possible here'), () => api.branch(r.id));
 }
 
-// ---- branch tree (SVG). Clicks only ask the main process to switch; it re-checks everything. ----
+// ---- reply graph (Cmd+G). One node per reply. Clicks only ask the main process to switch or branch;
+// it re-checks everything. Only the nodes in view are drawn. ----
 const busy = () => sent || chat.working;
-let tree: Tree = { nodes: [], current: '', error: null };
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (parent: Element, tag: string, attrs: Record<string, string | number>) => {
   const e = parent.appendChild(document.createElementNS(SVG, tag));
@@ -267,60 +304,394 @@ const svg = (parent: Element, tag: string, attrs: Record<string, string | number
   return e;
 };
 
-function renderTree(): void {
+let graph: GraphData = { nodes: [], current: null, session: '', error: null };
+let byNode = new Map<string, GNode>();
+let graphOpen = false;
+const view = { s: 1, tx: 0, ty: 0 }; // screen = world * s + t
+const NW = 132; // node size and spacing, world units
+const NH = 26;
+const COLW = 164;
+const ROWH = 52;
+const ZOOM_OPEN = 3; // zooming in past this over a node opens it
+const gview = byId('graphview');
+const gsvg = byId('graphsvg') as unknown as SVGSVGElement;
+const gpop = byId('graphpop');
+const at = (n: GNode) => ({ x: n.x * COLW, y: n.y * ROWH });
+const shortLabel = (s: string) => (s.length > 20 ? s.slice(0, 19) + '…' : s);
+
+function renderToolbar(): void {
   const btn = byId('branch') as HTMLButtonElement;
   btn.disabled = busy() || !chat.canBranch;
-  btn.title = busy() ? 'Disabled while Claude is working' : chat.canBranch ? 'Fork this session at its last message' : 'Send a message first';
-  byId('treenote').textContent = tree.error ? `branches.json unreadable (${tree.error}); showing each session as its own tree` : '';
+  btn.title = busy() ? 'Disabled while Claude is working' : chat.canBranch ? 'Fork this session at its last reply' : 'Send a message first';
+  byId('treenote').textContent = graph.error ? `branches.json unreadable (${graph.error}); branches show as separate chats` : '';
+}
 
-  // Order: roots by created time, each followed by its children (depth first). A visited set guards against loops.
-  const byTime = (a: TreeNode, b: TreeNode) => a.created.localeCompare(b.created);
-  const kids = new Map<string | null, TreeNode[]>();
-  for (const n of tree.nodes) kids.set(n.parent, [...(kids.get(n.parent) ?? []), n]);
-  const rows: { n: TreeNode; depth: number }[] = [];
-  const seen = new Set<string>();
-  const walk = (n: TreeNode, depth: number) => {
-    if (seen.has(n.id)) return;
-    seen.add(n.id);
-    rows.push({ n, depth });
-    for (const k of (kids.get(n.id) ?? []).sort(byTime)) walk(k, depth + 1);
-  };
-  for (const n of (kids.get(null) ?? []).sort(byTime)) walk(n, 0);
-  for (const n of tree.nodes) walk(n, 0); // anything left (a loop in branches.json) becomes a root
+let frame = 0;
+function drawSoon(): void {
+  if (!frame) frame = requestAnimationFrame(() => {
+    frame = 0;
+    drawGraph();
+  });
+}
 
-  const X = (d: number) => 14 + d * 18;
-  const Y = (r: number) => 16 + r * 28;
-  const pos = new Map(rows.map((r, i) => [r.n.id, { x: X(r.depth), y: Y(i) }]));
-  const graph = byId('graph');
-  graph.replaceChildren();
-  const root = svg(graph, 'svg', { width: Math.max(...rows.map((r) => X(r.depth)), 0) + 220, height: Y(rows.length) });
-  for (const { n } of rows) {
-    const p = n.parent && pos.get(n.parent);
-    const c = pos.get(n.id)!;
-    if (p) svg(root, 'path', { d: `M${p.x} ${p.y} V${c.y} H${c.x}`, fill: 'none', stroke: '#888', 'stroke-width': 1.5 });
-  }
-  for (const { n } of rows) {
-    const { x, y } = pos.get(n.id)!;
-    const isCurrent = n.id === tree.current;
-    const g = svg(root, 'g', { class: 'node' + (isCurrent ? ' current' : '') + (busy() ? ' busy' : '') });
-    svg(g, 'title', {}).textContent =
-      `${n.full}\n${n.created ? new Date(n.created).toLocaleString() : ''}` +
-      (isCurrent ? '\n(current session)' : busy() ? '\nDisabled while Claude is working' : '\nClick to switch to this session');
-    svg(g, 'rect', { x: x - 8, y: y - 12, width: 220, height: 24, rx: 4, class: 'hit' });
-    svg(g, 'circle', { cx: x, cy: y, r: isCurrent ? 6 : 5, class: n.empty ? 'dot empty' : 'dot' });
-    svg(g, 'text', { x: x + 12, y: y + 4 }).textContent = n.label;
-    g.addEventListener('click', () => {
-      if (!isCurrent && !busy()) api.openSession(n.id);
-    });
+function drawGraph(): void {
+  if (!graphOpen) return;
+  const W = gsvg.clientWidth;
+  const H = gsvg.clientHeight;
+  const x0 = -view.tx / view.s;
+  const x1 = (W - view.tx) / view.s;
+  const y0 = -view.ty / view.s;
+  const y1 = (H - view.ty) / view.s;
+  const seen = (ax: number, ay: number, bx: number, by: number) => bx > x0 && ax < x1 && by > y0 && ay < y1;
+  gsvg.replaceChildren();
+  const root = svg(gsvg, 'g', { transform: `translate(${view.tx} ${view.ty}) scale(${view.s})` });
+  const lines = svg(root, 'g', {});
+  const boxes = svg(root, 'g', {});
+  for (const n of graph.nodes) {
+    const p = at(n);
+    const q = n.parent ? byNode.get(n.parent) : undefined;
+    if (q) {
+      const a = at(q);
+      if (seen(Math.min(a.x, p.x), a.y, Math.max(a.x, p.x) + NW, p.y + NH)) {
+        const ax = a.x + NW / 2;
+        const ay = a.y + NH;
+        const px = p.x + NW / 2;
+        const my = (ay + p.y) / 2;
+        svg(lines, 'path', { d: `M${ax} ${ay} C${ax} ${my} ${px} ${my} ${px} ${p.y}`, class: 'gline' });
+      }
+    }
+    if (!seen(p.x, p.y, p.x + NW, p.y + NH)) continue;
+    const g = svg(boxes, 'g', { class: 'gnode' + (n.id === graph.current ? ' current' : ''), 'data-node': n.id });
+    svg(g, 'rect', { x: p.x, y: p.y, width: NW, height: NH, rx: 7 });
+    if (view.s > 0.35) svg(g, 'text', { x: p.x + 10, y: p.y + 17 }).textContent = shortLabel(n.label || '…');
   }
 }
 
-api.onTree((t) => {
-  tree = t;
-  renderTree();
+/** Center the view on a node (the current reply when the graph opens). */
+function centerOn(id: string | null): void {
+  const n = (id && byNode.get(id)) || graph.nodes[graph.nodes.length - 1];
+  view.s = 1;
+  const p = n ? at(n) : { x: 0, y: 0 };
+  view.tx = gsvg.clientWidth / 2 - (p.x + NW / 2);
+  view.ty = gsvg.clientHeight / 2 - (p.y + NH / 2);
+}
+
+function openGraph(on: boolean): void {
+  graphOpen = on;
+  gview.hidden = !on;
+  hidePop();
+  if (on) {
+    centerOn(graph.current);
+    drawGraph();
+  }
+}
+
+let wantReply = ''; // reply id to show once its session's chat is on screen
+let scrollUntil = 0;
+function scrollToReply(): void {
+  if (!wantReply) return;
+  if (Date.now() > scrollUntil) return void (wantReply = '');
+  const group = Array.from(document.querySelectorAll<HTMLElement>('#items .reply')).find((g) => g.dataset.reply === wantReply);
+  if (!group) return;
+  wantReply = '';
+  const target = (group.previousElementSibling as HTMLElement | null) ?? group; // the user message above the reply
+  target.scrollIntoView({ block: 'start' });
+  stick = false;
+  group.classList.add('flash');
+  setTimeout(() => group.classList.remove('flash'), 1200);
+}
+
+/** Click (or zoom into) a node: switch to its session and scroll to the reply. */
+function openNode(n: GNode): void {
+  openGraph(false);
+  wantReply = n.reply;
+  scrollUntil = Date.now() + 15000;
+  if (n.session === graph.session) return scrollToReply();
+  if (busy()) {
+    wantReply = '';
+    return showNote('Cannot switch sessions while Claude is working.', 6000);
+  }
+  api.openSession(n.session);
+}
+
+// Hover: first line of the reply, and a "Branch from here" button.
+let popTimer: number | undefined;
+let popNode: GNode | null = null;
+function hidePop(): void {
+  clearTimeout(popTimer);
+  gpop.hidden = true;
+  popNode = null;
+}
+function showPop(n: GNode): void {
+  clearTimeout(popTimer);
+  if (popNode === n && !gpop.hidden) return;
+  popNode = n;
+  gpop.replaceChildren();
+  add(gpop, 'div', 'gfirst').textContent = n.first || '(no text)';
+  const b = add(gpop, 'button', 'gbranch') as HTMLButtonElement;
+  b.textContent = 'Branch from here';
+  const why = busy() ? 'Disabled while Claude is working' : n.canBranch ? '' : 'Branch is not possible here';
+  b.disabled = !!why;
+  b.title = why || 'New branch that ends at this reply';
+  b.addEventListener('click', () => {
+    if (busy() || !n.canBranch) return;
+    api.branch(n.reply, n.session);
+    openGraph(false);
+  });
+  const p = at(n);
+  // to the right of the node, so it hides no other reply in the same column
+  gpop.style.left = `${gsvg.getBoundingClientRect().left - gview.getBoundingClientRect().left + (p.x + NW) * view.s + view.tx + 8}px`;
+  gpop.style.top = `${gsvg.getBoundingClientRect().top - gview.getBoundingClientRect().top + p.y * view.s + view.ty}px`;
+  gpop.hidden = false;
+}
+const popLater = () => {
+  clearTimeout(popTimer);
+  popTimer = window.setTimeout(hidePop, 250);
+};
+gpop.addEventListener('pointerenter', () => clearTimeout(popTimer));
+gpop.addEventListener('pointerleave', popLater);
+
+/** The node under a screen point (hit test in graph space, so redraws under the pointer do not matter). */
+function nodeAtPoint(clientX: number, clientY: number): GNode | null {
+  const r = gsvg.getBoundingClientRect();
+  const wx = (clientX - r.left - view.tx) / view.s;
+  const wy = (clientY - r.top - view.ty) / view.s;
+  return (
+    graph.nodes.find((n) => {
+      const p = at(n);
+      return wx >= p.x && wx <= p.x + NW && wy >= p.y && wy <= p.y + NH;
+    }) ?? null
+  );
+}
+gsvg.addEventListener('pointermove', (e) => {
+  if (drag) return;
+  const n = nodeAtPoint(e.clientX, e.clientY);
+  if (n) showPop(n);
+  else if (popNode) popLater();
 });
+gsvg.addEventListener('pointerleave', () => popNode && popLater());
+
+// Pan by dragging; a press without a drag on a node is a click.
+let drag: { x: number; y: number; tx: number; ty: number; node: GNode | null; moved: boolean } | null = null;
+gsvg.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  drag = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, node: nodeAtPoint(e.clientX, e.clientY), moved: false };
+  try {
+    gsvg.setPointerCapture(e.pointerId);
+  } catch {
+    // pointer already gone
+  }
+});
+gsvg.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x;
+  const dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+  if (!drag.moved) hidePop();
+  drag.moved = true;
+  view.tx = drag.tx + dx;
+  view.ty = drag.ty + dy;
+  drawSoon();
+});
+gsvg.addEventListener('pointerup', () => {
+  const d = drag;
+  drag = null;
+  if (d && !d.moved && d.node) openNode(d.node);
+});
+
+// Zoom: trackpad pinch (wheel + ctrlKey) or Cmd+scroll, around the pointer. Plain scroll pans.
+gsvg.addEventListener(
+  'wheel',
+  (e) => {
+    e.preventDefault();
+    hidePop();
+    if (!e.ctrlKey && !e.metaKey) {
+      view.tx -= e.deltaX;
+      view.ty -= e.deltaY;
+      return drawSoon();
+    }
+    const r = gsvg.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+    const old = view.s;
+    const s = Math.min(6, Math.max(0.15, old * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0025))));
+    view.tx = mx - ((mx - view.tx) * s) / old;
+    view.ty = my - ((my - view.ty) * s) / old;
+    view.s = s;
+    if (old < ZOOM_OPEN && s >= ZOOM_OPEN) {
+      const hit = nodeAtPoint(e.clientX, e.clientY);
+      if (hit) return openNode(hit);
+    }
+    drawSoon();
+  },
+  { passive: false },
+);
+window.addEventListener('resize', drawSoon);
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && graphOpen) openGraph(false);
+});
+
+api.onGraph((g) => {
+  graph = g;
+  byNode = new Map(g.nodes.map((n) => [n.id, n]));
+  renderToolbar();
+  drawSoon();
+});
+api.onToggleGraph(() => openGraph(!graphOpen));
+byId('graphbtn').addEventListener('click', () => openGraph(!graphOpen));
+byId('graphclose').addEventListener('click', () => openGraph(false));
 byId('branch').addEventListener('click', () => {
   if (!busy() && chat.canBranch) api.branch();
+});
+
+// ---- permission and question cards. One at a time, oldest first. A click only asks the main
+// process, which checks it against the card; the app never answers by itself. ----
+let cards: Card[] = [];
+let shownCard = ''; // "id|expired" of the card on screen
+let clicked = ''; // id of the card just answered (its buttons are off until it goes)
+let ticker: number | undefined;
+const cardBox = byId('cards');
+const PREVIEW_LINES = 40;
+
+function cardButton(row: HTMLElement, label: string, cls: string, onClick: () => void): HTMLButtonElement {
+  const b = add(row, 'button', 'card-btn' + (cls ? ' ' + cls : '')) as HTMLButtonElement;
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function preview(parent: HTMLElement, pv: Card['preview'][number]): void {
+  const pre = add(parent, 'pre', 'card-preview');
+  const lines = pv.text.split('\n');
+  if (!pv.text) add(pre, 'span', 'more').textContent = '(empty)';
+  for (const l of lines.slice(0, PREVIEW_LINES)) {
+    const cls = pv.kind === 'diff' ? (l.startsWith('- ') ? 'del' : l.startsWith('+ ') ? 'ins' : '') : '';
+    add(pre, 'span', cls).textContent = l + '\n';
+  }
+  if (lines.length > PREVIEW_LINES) add(pre, 'span', 'more').textContent = `… ${lines.length - PREVIEW_LINES} more lines`;
+}
+
+function buildCard(c: Card): void {
+  const box = add(cardBox, 'div', 'card' + (c.expired ? ' expired' : ''));
+  const send = (answer: object) => {
+    if (clicked === c.id || c.expired || timeLeft(c.expires, Date.now()).level === 'expired') return;
+    clicked = c.id;
+    box.classList.add('sent');
+    api.answerCard(c.id, answer);
+    setTimeout(() => {
+      // still here (the main process refused it): buttons back on
+      if (clicked === c.id && cards[0]?.id === c.id) {
+        clicked = '';
+        box.classList.remove('sent');
+      }
+    }, 3000);
+  };
+  add(box, 'div', 'card-title').textContent = c.title; // the raw tool name is not shown
+  if (c.target) {
+    add(box, 'div', 'card-label').textContent = c.targetLabel;
+    add(box, 'pre', 'card-target').textContent = c.target;
+  }
+  if (c.note) add(box, 'div', 'card-note').textContent = c.note;
+  for (const pv of c.preview) preview(box, pv);
+
+  const chosen: Record<string, string> = {};
+  const multi = c.questions.some((q) => q.multiSelect);
+  let sendAnswers: HTMLButtonElement | null = null;
+  for (const q of c.questions) {
+    const qe = add(box, 'div', 'question');
+    if (q.header) add(qe, 'div', 'q-header').textContent = q.header;
+    add(qe, 'div', 'q-text').textContent = q.question;
+    if (q.multiSelect) add(qe, 'div', 'card-note').textContent = 'Several answers allowed: the app cannot send these. Answer in the terminal.';
+    const opts = add(qe, 'div', 'q-options');
+    for (const o of q.options) {
+      const b = add(opts, 'button', 'q-option') as HTMLButtonElement;
+      add(b, 'span').textContent = o.label;
+      if (o.description) add(b, 'span', 'q-desc').textContent = o.description;
+      b.disabled = multi;
+      b.addEventListener('click', () => {
+        chosen[q.question] = o.label;
+        for (const x of Array.from(opts.children)) x.classList.toggle('chosen', x === b);
+        if (c.questions.length === 1) send({ action: 'answer', answers: { ...chosen } });
+        else if (sendAnswers) sendAnswers.disabled = Object.keys(chosen).length !== c.questions.length;
+      });
+    }
+  }
+
+  const row = add(box, 'div', 'card-buttons');
+  if (c.kind === 'permission') {
+    cardButton(row, 'Allow once', 'allow', () => send({ action: 'allow' }));
+    const reason = add(row, 'input', 'card-reason') as HTMLInputElement;
+    reason.placeholder = 'Reason for Deny (optional)';
+    const deny = () => send({ action: 'deny', reason: reason.value });
+    cardButton(row, 'Deny', 'deny', deny);
+    reason.addEventListener('keydown', (e) => e.key === 'Enter' && !e.isComposing && deny());
+    c.rules.forEach((r, i) => {
+      const b = cardButton(row, `Always allow ${r.label}`, 'always', () => send({ action: 'always', rule: i }));
+      b.title = `Allows this call and saves the rule ${r.label} for ${r.destination}, as Claude Code suggested it.`;
+    });
+  } else {
+    if (c.questions.length > 1 && !multi) {
+      sendAnswers = cardButton(row, 'Send answers', 'allow', () => send({ action: 'answer', answers: { ...chosen } }));
+      sendAnswers.disabled = true;
+    }
+    cardButton(row, 'Answer in terminal', '', () => send({ action: 'terminal' })).title = 'For "Type something", "Chat about this" and anything the buttons cannot send';
+  }
+  add(box, 'div', 'card-expired').textContent = 'Expired, answer in the terminal';
+
+  // Time bar: the used time fills in from the right edge; full = time is up.
+  add(add(box, 'div', 'timer-track'), 'div', 'timer-fill');
+  const foot = add(box, 'div', 'card-foot');
+  add(foot, 'span', 'queue');
+  add(foot, 'span', 'timer-text');
+}
+
+/** Time bar of the card on screen, and the time left of the cards waiting behind it. */
+function tick(): void {
+  const head = cards[0];
+  if (!head) return;
+  const now = Date.now();
+  const t = timeLeft(head.expires, now);
+  if (t.level === 'expired' && !head.expired) {
+    head.expired = true; // the main process sends the same at the same moment
+    showTerm(true);
+    renderCards();
+    return;
+  }
+  const fill = cardBox.querySelector('.timer-fill') as HTMLElement | null;
+  if (fill) {
+    fill.style.width = `${(1 - t.fraction) * 100}%`;
+    fill.style.backgroundColor = t.level === 'normal' ? 'var(--timer-fill)' : 'var(--timer-urgent)';
+  }
+  const text = cardBox.querySelector('.timer-text');
+  if (text) text.textContent = head.expired ? 'Expired' : t.text;
+  const queue = cardBox.querySelector('.queue') as HTMLElement | null;
+  if (queue) {
+    const rest = cards.slice(1);
+    queue.textContent = rest.length ? `${rest.length} more waiting: ` + rest.map((c) => (c.expired ? 'expired' : timeLeft(c.expires, now).text)).join(', ') : '';
+  }
+}
+
+function renderCards(): void {
+  const head = cards[0];
+  const key = head ? `${head.id}|${head.expired}` : '';
+  if (key !== shownCard) {
+    shownCard = key;
+    cardBox.replaceChildren();
+    if (head) buildCard(head);
+  }
+  if (!head) {
+    clearInterval(ticker); // closed early or answered: the timer stops
+    ticker = undefined;
+    return;
+  }
+  ticker ??= window.setInterval(tick, 250);
+  tick();
+  toBottom();
+}
+
+api.onCards((c) => {
+  cards = c;
+  renderCards();
 });
 
 const note = byId('note');
@@ -358,6 +729,7 @@ input.addEventListener('keydown', (e) => {
 function apply(d: any): void {
   const css = document.body.style;
   css.backgroundColor = d.window.background;
+  css.setProperty('--window-bg', d.window.background);
   css.color = d.terminal.textColor;
   css.setProperty('--chat-font', d.chat.font);
   css.setProperty('--chat-size', `${d.chat.fontSize}px`);
@@ -374,6 +746,13 @@ function apply(d: any): void {
   css.setProperty('--body-size', `${d.body.size}px`);
   css.setProperty('--bold-color', d.bold.color);
   css.setProperty('--code-bg', d.code.background);
+  css.setProperty('--timer-track', d.timer.track);
+  css.setProperty('--timer-fill', d.timer.fill);
+  css.setProperty('--timer-urgent', d.timer.urgent);
+  css.setProperty('--graph-node', d.graph.node);
+  css.setProperty('--graph-line', d.graph.line);
+  css.setProperty('--graph-current', d.graph.current);
+  css.setProperty('--graph-label', d.graph.label);
   term.options.theme = { background: d.terminal.background, foreground: d.terminal.textColor, cursor: d.terminal.textColor };
   term.options.fontSize = d.terminal.fontSize;
   byId('term').style.backgroundColor = d.terminal.background;

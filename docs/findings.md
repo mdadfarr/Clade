@@ -137,7 +137,7 @@ Use this if a later Claude Code version refuses or misreads a cut file.
 - Costs: Claude sees history as one file, not real turns. Tool results and
   thinking are lost. The .md file sits in the user's folder.
 
-## Permission cards: PermissionRequest hook tests (2026-11-17, Claude Code 2.1.325)
+## Permission cards: PermissionRequest hook tests (2026-11-16, Claude Code 2.1.325)
 
 Setup: interactive `claude --permission-mode default` in a pty, scratch folder,
 model haiku (cheap; hooks do not depend on the model). Hooks in the folder's
@@ -227,3 +227,53 @@ Consequences for the build:
   entry into the existing JSON, not keep its own copy of the file.
 - Test files deleted afterwards. The scratch folders got trust entries in
   `~/.claude.json`.
+
+## Permission cards: build check (2026-11-16, Claude Code 2.1.325)
+
+Real app on a scratch folder, driven over the DevTools protocol, model haiku,
+folder set to `defaultMode: "default"` (the user's default is auto mode, which
+asks almost nothing, so cards only show in folders where Claude Code asks).
+
+- Hook script alone: no endpoint file, exit in 0.4 s; dead port, 0.2 s; app
+  that never accepts, 2.2 s; all with no output. Normal answer passed through.
+- Trust prompt of a new folder (no hook for it): terminal opened by itself with
+  "Claude is asking something in the terminal". Its default is "No, exit".
+- Write: card with path and content, Allow once: file written.
+- Bash `echo cardtest > out.txt`: Deny with a reason: not run, Claude quoted
+  the reason word for word.
+- AskUserQuestion Red/Blue: clicked Blue, Claude said "You picked Blue."
+- `touch term1.txt`, answered with Enter in the terminal: the card closed when
+  the tool_result reached the session file.
+- Two parallel Bash calls: Claude Code asks one at a time, so the cards came
+  one after the other, in order. The second card's timer already showed 9:48,
+  counted from its own request.
+- `python3 -c 'print(6*7)'`: Claude Code suggested `addRules` to localSettings;
+  the button read "Always allow Bash(python3 -c 'print(6*7)')" and saved exactly
+  that rule. For `mkdir`/`touch` the terminal offers "always allow access to
+  <folder>" instead, which is not a rule: no button.
+- Expiry (lifetime patched to 40 s in the compiled files for this run only):
+  bar warning, then urgent under 30 s, then "Expired, answer in the terminal",
+  terminal opened, hook gave no decision, the terminal prompt stayed and
+  worked; the expired card closed when the result arrived.
+- Not tested: switching sessions while a card waits. The app already blocks
+  switching while Claude is working, and a permission wait counts as working.
+
+## Grey time bar, reply labels, reply graph: build check (2026-11-16)
+
+Real app, scratch folder, haiku, driven over the DevTools protocol.
+
+- Question card: title "Claude asks", no raw tool name. 3px grey bar inside
+  the card; the fill grows from the right edge (after 5 s: 8 px of 710 px);
+  "9:45 left" in small grey text at the bottom right of the card.
+- Labels: haiku ended every reply with `{label=...}` from the CLAUDE.md rule
+  ("Fruit choice pear", "Pear fact", "Moon fact", "Apple browning fact"). None
+  showed in the chat.
+- Graph (Cmd+G or the Graph button): 3 replies in a column; "Branch from here"
+  on the first reply made a branch, its message hung under reply 1 in a second
+  column; the current reply had the lighter fill.
+- Zoom past 3x over "Moon fact" switched to its session; a click on "Apple
+  browning fact" switched back. Drag panned the view.
+- Real CDP mouse events hung while the test window was covered (Chromium
+  throttles hidden windows), so hover, pinch, drag and click were sent as DOM
+  pointer and wheel events to the same handlers. A real trackpad pinch was not
+  tried.

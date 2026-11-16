@@ -23,6 +23,8 @@ export interface Design {
   body: { size: number };
   bold: { color: string };
   code: { background: string };
+  timer: { track: string; fill: string; urgent: string };
+  graph: { node: string; line: string; current: string; label: string };
 }
 
 export interface Heading {
@@ -51,6 +53,8 @@ export const DEFAULT_DESIGN: Design = {
   body: { size: 14 },
   bold: { color: 'inherit' },
   code: { background: 'rgba(0,0,0,0.3)' },
+  timer: { track: 'rgba(127,127,127,0.18)', fill: 'rgba(200,200,200,0.55)', urgent: '#a0605b' },
+  graph: { node: '#3a3a3a', line: '#5c5c5c', current: '#555555', label: '#c8c8c8' },
 };
 
 // Only plain colors: hex, a color name, or rgb()/rgba(). No url(), no other CSS.
@@ -132,6 +136,16 @@ function panel(v: unknown, where: string): Panel {
   };
 }
 
+function timer(v: unknown): Design['timer'] {
+  const o = obj(v, ['track', 'fill', 'urgent'], 'timer');
+  return { track: color(o.track, 'timer.track'), fill: color(o.fill, 'timer.fill'), urgent: color(o.urgent, 'timer.urgent') };
+}
+
+function graph(v: unknown): Design['graph'] {
+  const o = obj(v, ['node', 'line', 'current', 'label'], 'graph');
+  return { node: color(o.node, 'graph.node'), line: color(o.line, 'graph.line'), current: color(o.current, 'graph.current'), label: color(o.label, 'graph.label') };
+}
+
 /** Parse and validate design.json text. Throws an Error with a one-line message. */
 export function parseDesign(text: string): Design {
   let raw: unknown;
@@ -141,7 +155,7 @@ export function parseDesign(text: string): Design {
     throw new Error(`bad JSON: ${(e as Error).message}`);
   }
   // The chat sections may be left out (older files); then defaults apply.
-  const optional = ['chat', 'userBox', 'claudeBox', 'headings', 'body', 'bold', 'code'];
+  const optional = ['chat', 'userBox', 'claudeBox', 'headings', 'body', 'bold', 'code', 'timer', 'graph'];
   const d = obj(raw, ['terminal', 'window', 'panels', ...optional], 'design', optional);
   const t = obj(d.terminal, ['background', 'textColor', 'fontSize'], 'terminal');
   const w = obj(d.window, ['background'], 'window');
@@ -160,5 +174,7 @@ export function parseDesign(text: string): Design {
     body: d.body === undefined ? DEFAULT_DESIGN.body : { size: num(obj(d.body, ['size'], 'body').size, 6, 40, 'body.size') },
     bold: d.bold === undefined ? DEFAULT_DESIGN.bold : { color: color(obj(d.bold, ['color'], 'bold').color, 'bold.color') },
     code: d.code === undefined ? DEFAULT_DESIGN.code : { background: color(obj(d.code, ['background'], 'code').background, 'code.background') },
+    timer: d.timer === undefined ? DEFAULT_DESIGN.timer : timer(d.timer),
+    graph: d.graph === undefined ? DEFAULT_DESIGN.graph : graph(d.graph),
   };
 }

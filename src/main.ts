@@ -2,11 +2,14 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu } from 'electron';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as http from 'http';
 import * as pty from 'node-pty';
 import { DEFAULT_DESIGN, Design, parseDesign } from './design';
 import { Chat, cutSession, parseSession } from './session';
+import { buildGraph, layoutGraph } from './graph';
 import { Branch, firstWords, parseBranches, UUID } from './branches';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { Action, answerBody, answeredCalls, CardView, HOOK_MARK, HookInput, makeCard, mergeHook, parseHookInput } from './cards';
 
 const MD_START = '<!-- design-app:start -->';
 const MD_END = '<!-- design-app:end -->';
@@ -19,7 +22,9 @@ folder and re-applies it the moment the file changes. When the user asks to
 change how the app looks, edit \`design.json\`. Nothing else is needed.
 
 The window shows a chat view (the user's messages on the right, yours on the
-left), optional panels, and a small terminal strip at the bottom.
+left), optional panels, and a terminal that is hidden by default (Cmd+J shows it).
+Claude Code's permission questions appear as cards in the chat, each with a
+time bar under it.
 
 Rules: valid JSON, every key below is required, no other keys are allowed.
 If the file is invalid the app keeps the old design and shows an error.
@@ -55,9 +60,22 @@ If the file is invalid the app keeps the old design and shows an error.
   },
   "body": { "size": number 6-40 (message text, pixels) },
   "bold": { "color": color },
-  "code": { "background": color }
+  "code": { "background": color },
+  "timer": { "track": color, "fill": color, "urgent": color },
+  "graph": { "node": color, "line": color, "current": color, "label": color }
 }
 \`\`\`
+
+\`timer\` colors the thin time bar at the bottom of permission and question
+cards: \`track\` is the empty bar, \`fill\` the used time (it fills in from the
+right), \`urgent\` replaces \`fill\` under 30 seconds left. Keep these grey,
+with at most a muted red for \`urgent\`. Defaults: "rgba(127,127,127,0.18)",
+"rgba(200,200,200,0.55)", "#a0605b".
+
+\`graph\` colors the reply graph (Cmd+G): \`node\` is a reply's box, \`line\`
+the lines between replies, \`current\` the box of the reply shown now, \`label\`
+the text in the boxes. Keep these calm greys. Defaults: "#3a3a3a", "#5c5c5c",
+"#555555", "#c8c8c8".
 
 color = hex ("#103010"), a color name ("darkgreen"), or "rgb(...)"/"rgba(...)".
 "inherit" means: same as the surrounding text.
@@ -91,6 +109,21 @@ Your replies are drawn in the chat view, not in a terminal. Write them like this
   - Pick colors that are readable on the claudeBox background; a color with
     too little contrast is ignored.
 - No HTML. It is shown as plain text.
+
+## Reply label (required, every reply)
+
+End EVERY reply with a label tag on its own last line:
+
+\`{label=two or three words}\`
+
+- Two or three plain words that sum up this reply, e.g. \`{label=Fix login bug}\`.
+- Exactly one tag per reply, as the very last line, nothing after it. No
+  markdown, no braces, no line break inside the tag.
+- The app removes it from the chat and from Copy and shows it in the reply
+  graph. A reply without it gets its first three words instead, which is worse.
+- This rule wins over any other style instruction, output style or skill,
+  including ones that ask for terse replies or a fixed format. Even a one-word
+  reply ends with its label.
 ${MD_END}
 `;
 
@@ -176,8 +209,6 @@ let treeKey = '';
 // A Retry waiting to type its one message into the new branch. Only set by a Retry click.
 let pending: { id: string; stage: 'waiting' | 'sent'; count: number } | null = null;
 
-const textOf = (chat: Chat, uuid: string) => chat.items.find((i) => i.uuid === uuid)?.text;
-const isRetry = (b: Branch) => b.forkWords.startsWith('retry: ');
 
 function pollSession(): void {
   if (!sessionId || !win) return;
@@ -208,42 +239,206 @@ function pollSession(): void {
       win.webContents.send('chat', { items, replies, working: (shown?.working ?? false) || !!pending, canBranch });
     }
 
-    // 2. Tree: branches.json plus every session file in the project's session folder.
+    checkCards();
+
+    // 2. Graph: one node per reply, from every session file in the project's session folder plus branches.json.
     const files = fs.existsSync(sessionDir()) ? fs.readdirSync(sessionDir()).filter((n) => UUID.test(n.replace(/\.jsonl$/, '')) && n.endsWith('.jsonl')) : [];
     const tKey = [sessionId, statKey(branchesFile()), ...files.map((n) => n + statKey(path.join(sessionDir(), n)))].join('|');
     if (tKey === treeKey) return;
     treeKey = tKey;
     loadBranches();
     const ids = new Set(files.map((n) => n.slice(0, -6)));
-    const nodes: { id: string; parent: string | null; label: string; full: string; created: string; empty: boolean }[] = [];
-    for (const b of branches) {
-      const parent = readSession(b.parent);
-      const own = ids.has(b.id) ? readSession(b.id) : null;
-      const empty = !own || own.lastAny === b.forkUuid; // a cut file with nothing sent yet is still empty
-      const reply = parent?.replies.find((r) => r.forkUuid === b.forkUuid);
-      nodes.push({
-        id: b.id,
-        parent: b.parent,
-        label: empty ? 'empty branch' : b.forkWords,
-        full: isRetry(b) ? b.forkWords : (parent && (reply?.text || textOf(parent, b.forkUuid))) || b.forkWords,
-        created: b.created,
-        empty,
-      });
-    }
-    for (const id of ids) {
-      if (branches.some((b) => b.id === id)) continue;
-      const chat = readSession(id);
-      const first = chat?.first ?? '';
-      nodes.push({ id, parent: null, label: first ? firstWords(first) : '(no messages)', full: first || '(no messages)', created: chat?.created ?? '', empty: false });
-    }
-    if (!nodes.some((n) => n.id === sessionId)) {
-      nodes.push({ id: sessionId, parent: null, label: 'new session', full: 'New session, no messages yet', created: new Date().toISOString(), empty: true });
-    }
-    for (const n of nodes) if (n.parent && !nodes.some((m) => m.id === n.parent)) n.parent = null;
-    win.webContents.send('tree', { nodes, current: sessionId, error: branchesError });
+    ids.add(sessionId);
+    const graph = buildGraph([...ids].map((id) => ({ id, chat: readSession(id) })), branches, sessionId);
+    const nodes = layoutGraph(graph.nodes).map((p) => ({ ...p.node, x: p.x, y: p.y }));
+    win.webContents.send('graph', { nodes, current: graph.current, session: sessionId, error: branchesError });
   } catch (e) {
     console.error('session poll:', e);
   }
+}
+
+// ---- permission cards. Claude Code's PermissionRequest hook (dist/hook.js) posts each question to a
+// server on 127.0.0.1 only (random port, token made at each launch). The app answers only when the
+// user clicks; otherwise it sends no decision and Claude Code's own terminal prompt stays. ----
+const CARD_MS = 590_000; // a card expires this long after its request arrived
+const HOOK_TIMEOUT_S = 600; // Claude Code's limit for the hook (its default too)
+let token = '';
+let endpointFile = '';
+let cardsError: string | null = null; // why cards are off, if they are
+const ran = new Set<string>(); // sessions the app started in this launch
+interface Pending {
+  card: CardView;
+  input: HookInput;
+  res: http.ServerResponse | null; // the hook's open request; null once answered
+  before: Set<string>; // matching tool calls that already had a result when the request arrived
+  timer: NodeJS.Timeout;
+}
+let cards: Pending[] = []; // in arrival order
+let cardsKey = '';
+let lastCardEvent = 0;
+
+const sendCards = () => win?.webContents.send('cards', cards.filter((p) => p.card.session === sessionId).map((p) => p.card));
+const showTerminal = (why: string) => win?.webContents.send('show-term', why);
+
+function reply(p: Pending, body: string): void {
+  const r = p.res;
+  p.res = null;
+  if (r && !r.writableEnded) r.end(body);
+}
+
+function closeCard(p: Pending, body = ''): void {
+  clearTimeout(p.timer);
+  reply(p, body);
+  cards = cards.filter((x) => x !== p);
+  lastCardEvent = Date.now();
+  sendCards();
+}
+
+function expire(p: Pending): void {
+  reply(p, ''); // no decision: the terminal prompt stays
+  p.card.expired = true;
+  lastCardEvent = Date.now();
+  sendCards();
+  if (p.card.session === sessionId) showTerminal('A card expired. Answer Claude in the terminal.');
+}
+
+/** The session file plus its subagent files (subagent tool calls are written there). */
+function sessionTexts(id: string): string {
+  const parts: string[] = [];
+  try {
+    parts.push(fs.readFileSync(sessionFile(id), 'utf8'));
+  } catch {
+    // no file yet
+  }
+  const sub = path.join(sessionDir(), id, 'subagents');
+  try {
+    for (const n of fs.readdirSync(sub)) if (n.endsWith('.jsonl')) parts.push(fs.readFileSync(path.join(sub, n), 'utf8'));
+  } catch {
+    // no subagents
+  }
+  return parts.join('\n');
+}
+
+/** Close cards whose tool call got its result (answered in the terminal), and expired cards whose turn ended. */
+function checkCards(): void {
+  const mine = cards.filter((p) => p.card.session === sessionId);
+  if (!mine.length) return;
+  const sub = path.join(sessionDir(), sessionId, 'subagents');
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(sub);
+  } catch {
+    // no subagents
+  }
+  const key = [sessionId, statKey(sessionFile(sessionId)), ...names.map((n) => n + statKey(path.join(sub, n)))].join('|');
+  if (key === cardsKey) return;
+  cardsKey = key;
+  const text = sessionTexts(sessionId);
+  for (const p of mine) {
+    const done = answeredCalls(text, p.input.tool_name, p.input.tool_input).some((id) => !p.before.has(id));
+    if (done || (p.card.expired && currentChat && !currentChat.working)) closeCard(p);
+  }
+}
+
+function onHookRequest(text: string, res: http.ServerResponse): void {
+  let input: HookInput;
+  try {
+    input = parseHookInput(text);
+  } catch (e) {
+    res.end('');
+    showTerminal(`Claude Code sent a question the app cannot read (${(e as Error).message}). Answer it in the terminal.`);
+    return;
+  }
+  // Only sessions this app runs, and only the one running now. Anything else keeps its own prompt.
+  if (!ran.has(input.session_id) || input.session_id !== sessionId || !term) return void res.end('');
+  const now = Date.now();
+  let card: CardView;
+  try {
+    card = makeCard(input, randomUUID(), now, CARD_MS);
+  } catch (e) {
+    res.end('');
+    showTerminal(`Claude asked something the app cannot show (${(e as Error).message}). Answer it in the terminal.`);
+    return;
+  }
+  const before = new Set(answeredCalls(sessionTexts(input.session_id), input.tool_name, input.tool_input));
+  const p: Pending = { card, input, res, before, timer: setTimeout(() => expire(p), CARD_MS) };
+  res.on('close', () => {
+    // the hook went away without our answer (Claude Code stopped it): the card has nothing to answer
+    if (p.res === res && !res.writableEnded) {
+      p.res = null;
+      if (!p.card.expired) closeCard(p);
+    }
+  });
+  cards.push(p);
+  cardsKey = '';
+  lastCardEvent = now;
+  sendCards();
+}
+
+async function startCardServer(): Promise<void> {
+  token = randomBytes(32).toString('hex');
+  const expected = Buffer.from(`Bearer ${token}`);
+  const server = http.createServer((req, res) => {
+    const fail = (code: number) => {
+      res.writeHead(code);
+      res.end();
+    };
+    const got = Buffer.from(String(req.headers.authorization ?? ''));
+    const port = (server.address() as { port: number }).port;
+    if (req.method !== 'POST' || req.url !== '/permission') return fail(404);
+    if (req.headers.host !== `127.0.0.1:${port}` || req.headers.origin !== undefined) return fail(403); // not from a browser
+    if (got.length !== expected.length || !timingSafeEqual(got, expected)) return fail(403);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > 1_000_000) {
+        fail(413);
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => {
+      if (res.writableEnded) return;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.flushHeaders(); // tells the hook the app has its question (it gives up after 2 s without this)
+      onHookRequest(Buffer.concat(chunks).toString('utf8'), res);
+    });
+  });
+  server.requestTimeout = 10_000; // receiving the request; the answer may take up to CARD_MS
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const port = (server.address() as { port: number }).port;
+
+  // Port and token for the hook, in the app's data folder, readable by the owner only.
+  const dir = app.getPath('userData');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const key = createHash('sha256').update(fs.realpathSync(folder)).digest('hex').slice(0, 16);
+  endpointFile = path.join(dir, `hook-${key}.json`);
+  const tmp = `${endpointFile}.${process.pid}.tmp`;
+  fs.rmSync(tmp, { force: true });
+  fs.writeFileSync(tmp, JSON.stringify({ port, token }), { mode: 0o600, flag: 'wx' });
+  fs.renameSync(tmp, endpointFile);
+}
+
+/** Add our hook entry to .claude/settings.local.json. Everything else in the file is kept. */
+function installHook(): void {
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  const command = `${HOOK_MARK} ELECTRON_RUN_AS_NODE=1 ${q(process.execPath)} ${q(path.join(__dirname, 'hook.js'))} ${q(endpointFile)}`;
+  const file = path.join(folder, '.claude', 'settings.local.json');
+  const read = () => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null);
+  const before = read();
+  let next: string | null;
+  try {
+    next = mergeHook(before, command, HOOK_TIMEOUT_S);
+  } catch (e) {
+    throw new Error(`.claude/settings.local.json was left as it is: ${(e as Error).message}`);
+  }
+  if (next === null) return;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (read() !== before) throw new Error('.claude/settings.local.json changed while the app was adding its hook; restart the app');
+  fs.writeFileSync(file, next, { flag: before === null ? 'wx' : 'w' });
 }
 
 // Start claude for a session. Only called from the user's own actions (app start, Branch, Retry, node click).
@@ -253,8 +448,10 @@ function runClaude(id: string, args: string[]): void {
   term = null;
   old?.kill();
   sessionId = id;
-  chatKey = treeKey = '';
+  ran.add(id);
+  chatKey = treeKey = cardsKey = '';
   win?.webContents.send('term-reset');
+  sendCards();
   // Drop markers a parent Claude Code would pass on (they turn transcript saving off).
   const env = { ...process.env } as Record<string, string>;
   for (const k of ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_SSE_PORT', 'CLAUDE_PID']) delete env[k];
@@ -266,8 +463,27 @@ function runClaude(id: string, args: string[]): void {
     return;
   }
   term = p;
-  p.onData((d) => term === p && win?.webContents.send('pty-data', d));
-  p.onExit(() => term === p && win?.webContents.send('pty-data', '\r\n[claude exited]\r\n'));
+  // A question in the terminal with no card for it (the hook could not reach the app, a trust
+  // prompt, ...): show the terminal.
+  let tail = '';
+  let ask: NodeJS.Timeout | undefined;
+  p.onData((d) => {
+    if (term !== p) return;
+    win?.webContents.send('pty-data', d);
+    tail = (tail + plain(d)).slice(-400);
+    if (!/Esc to cancel|Enter to confirm/.test(tail)) return;
+    tail = '';
+    clearTimeout(ask);
+    ask = setTimeout(() => {
+      if (term !== p || cards.some((c) => c.card.session === id) || Date.now() - lastCardEvent < 5000) return;
+      showTerminal('Claude is asking something in the terminal.');
+    }, 2500);
+  });
+  p.onExit(() => {
+    clearTimeout(ask);
+    for (const c of cards.filter((c) => c.card.session === id)) closeCard(c); // its questions died with it
+    if (term === p) win?.webContents.send('pty-data', '\r\n[claude exited]\r\n');
+  });
 }
 
 function openSession(id: string): void {
@@ -372,6 +588,12 @@ app.whenReady().then(async () => {
   folder = chosen;
   designFile = path.join(folder, 'design.json');
   prepareFolder();
+  try {
+    await startCardServer();
+    installHook();
+  } catch (e) {
+    cardsError = (e as Error).message.replace(/\s+/g, ' ');
+  }
 
   // Fixed menu. The reset shortcut lives here, outside design.json's reach.
   Menu.setApplicationMenu(
@@ -379,7 +601,8 @@ app.whenReady().then(async () => {
       { role: 'appMenu' },
       { role: 'editMenu' },
       { label: 'Design', submenu: [{ label: 'Reset Design', accelerator: 'Cmd+Shift+R', click: reset }] },
-      { label: 'Terminal', submenu: [{ label: 'Bigger / Smaller Terminal', accelerator: 'Cmd+J', click: () => win?.webContents.send('toggle-term') }] },
+      { label: 'Terminal', submenu: [{ label: 'Show / Hide Terminal', accelerator: 'Cmd+J', click: () => win?.webContents.send('toggle-term') }] },
+      { label: 'Graph', submenu: [{ label: 'Show / Hide Reply Graph', accelerator: 'Cmd+G', click: () => win?.webContents.send('toggle-graph') }] },
     ]),
   );
 
@@ -398,19 +621,28 @@ app.whenReady().then(async () => {
   ipcMain.on('start', (_e, cols: number, rows: number) => {
     load();
     size = { cols, rows };
-    chatKey = treeKey = '';
+    chatKey = treeKey = cardsKey = '';
+    sendCards();
+    if (cardsError) {
+      win?.webContents.send('note', `Permission cards are off: ${cardsError}`);
+      showTerminal(`Permission cards are off: ${cardsError}`);
+    }
     if (term) return;
     loadBranches();
     const id = randomUUID(); // the app picks the id, so it knows exactly which file to read
     runClaude(id, ['--session-id', id]);
   });
 
-  // Branch (user click only): new branch ending at that reply (no id: the newest reply).
-  ipcMain.on('branch', (_e, replyId?: unknown) => {
-    const chat = readSession(sessionId);
-    if (!chat || chat.working || pending) return;
+  // Branch (user click only): new branch ending at that reply (no id: the newest reply). From the
+  // graph, the reply may belong to another session (given as `from`); the same branch logic applies.
+  ipcMain.on('branch', (_e, replyId?: unknown, from?: unknown) => {
+    const current = readSession(sessionId);
+    if (current?.working || pending) return;
+    const parent = typeof from === 'string' && UUID.test(from) ? from : sessionId;
+    const chat = parent === sessionId ? current : readSession(parent);
+    if (!chat) return;
     const r = typeof replyId === 'string' ? chat.replies.find((x) => x.id === replyId) : chat.replies.at(-1);
-    if (r?.forkUuid) newBranch(sessionId, r.forkUuid, firstWords(r.text) || '(fork)');
+    if (r?.forkUuid) newBranch(parent, r.forkUuid, firstWords(r.text) || '(fork)');
   });
 
   // Retry (user click only): new branch ending right before that reply, then send its user message once.
@@ -423,6 +655,21 @@ app.whenReady().then(async () => {
     if (!id || !term) return;
     pending = { id, stage: 'waiting', count: chat.replies.indexOf(r) };
     typeWhenReady(term, r.userText);
+  });
+
+  // A card click (user click only). Checked against the card; anything that does not fit sends nothing.
+  ipcMain.on('card-answer', (_e, id: unknown, a: unknown) => {
+    const p = cards.find((x) => x.card.id === id);
+    if (!p || p.card.session !== sessionId || p.card.expired || !p.res || typeof a !== 'object' || a === null) return;
+    let body: string;
+    try {
+      body = answerBody(p.input, p.card, a as Action);
+    } catch (e) {
+      win?.webContents.send('note', `Nothing sent: ${(e as Error).message}`);
+      return;
+    }
+    closeCard(p, body);
+    if ((a as Action).action === 'terminal') showTerminal('Answer Claude in the terminal.');
   });
 
   // Copy (user click only): the reply text, already stripped of style tags.
@@ -459,3 +706,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => app.quit());
+process.on('SIGTERM', () => app.quit()); // so will-quit below still runs
+app.on('will-quit', () => {
+  for (const p of cards) reply(p, ''); // the terminal prompts take over
+  try {
+    if (endpointFile && JSON.parse(fs.readFileSync(endpointFile, 'utf8')).token === token) fs.rmSync(endpointFile);
+  } catch {
+    // already gone
+  }
+});
