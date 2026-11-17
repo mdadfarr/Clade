@@ -1,5 +1,5 @@
 {
-  "name": "claude-design-terminal",
+  "name": "clade",
   "version": "0.0.1",
   "private": true,
   "main": "dist/main.js",
@@ -7,16 +7,19 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper",
     "build": "tsc",
     "start": "tsc && electron .",
-    "test": "tsc && node --test dist/design.test.js dist/cards.test.js dist/graph.test.js"
+    "test": "rm -rf dist && tsc && node --test \"dist/*.test.js\""
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "chart.js": "^4.6.1",
+    "d3": "^7.9.2",
     "katex": "^0.19.1",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@xterm/headless": "^6.0.0",
     "electron": "^39.0.0",
     "typescript": "^5.6.0"
   }
