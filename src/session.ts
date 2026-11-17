@@ -2,10 +2,11 @@
 // at an earlier point to make a branch. Pure functions: no file access here.
 
 export interface ChatItem {
-  role: 'user' | 'claude' | 'tool' | 'notice';
+  role: 'user' | 'claude' | 'tool' | 'notice' | 'artifact';
   text: string;
   uuid?: string; // uuid of the session line this message came from
   reply?: number; // index into Chat.replies for Claude's side of an exchange
+  paths?: string[]; // tool lines: the files that Write/Edit calls named (the app shows artifact cards for some)
 }
 
 /** Everything between one real user message and the next. */
@@ -28,10 +29,12 @@ export interface Chat {
   lastUuid: string | null; // uuid of the last user/assistant line
   lastAny: string | null; // uuid of the last chained entry of any kind (user, assistant, system, attachment)
   first: string; // the first message the user typed
+  model: string; // the model that wrote the newest reply ('' if none yet)
   created: string | null; // timestamp of the first message
 }
 
 const CHAINED = ['user', 'assistant', 'system', 'attachment'];
+const WRITERS = ['Write', 'Edit', 'MultiEdit'];
 
 const LABEL = /\{label=([^{}\n]*)\}/g;
 
@@ -53,9 +56,10 @@ export function firstWordsOf(s: string, n: number): string {
   return s.replace(/[#*`>$_{}\[\]()|~-]/g, ' ').split(/\s+/).filter(Boolean).slice(0, n).join(' ');
 }
 
-/** {c=#fff s=1.4}text{/} -> text. LaTeX and everything else stay as written. */
+/** Tags removed, inner text kept: {accent}text{/}, {warn big}text{/}, {fx=dither}text{/} and the old
+ *  {c=#fff s=1.4}text{/}. LaTeX and everything else stay as written. (Same rule as stripTags in markup.ts.) */
 export function stripStyleTags(s: string): string {
-  return s.replace(/\{((?:c|s)=[^\s{}]+(?:\s+(?:c|s)=[^\s{}]+)?)\}([^]*?)\{\/\}/g, '$2');
+  return s.replace(/\{(?:(?:c|s)=[^\s{}]+(?: (?:c|s)=[^\s{}]+)?|fx=[a-z]+|[a-z]+(?: [a-z]+)?)\}([^]*?)\{\/\}/g, '$1');
 }
 
 /** A message Claude Code wrote itself (usage limit, API error, "No response requested."), not Claude's own reply. */
@@ -65,7 +69,7 @@ function isNotice(d: any, said: string): boolean {
 
 /** Parse a session file. With stopUuid, stop after that line (used to show a parent up to a fork point). */
 export function parseSession(text: string, stopUuid?: string): Chat {
-  const chat: Chat = { items: [], replies: [], working: false, lastUuid: null, lastAny: null, first: '', created: null };
+  const chat: Chat = { items: [], replies: [], working: false, lastUuid: null, lastAny: null, first: '', model: '', created: null };
   const { items, replies } = chat;
   for (const line of text.split('\n')) {
     let d: any;
@@ -104,17 +108,21 @@ export function parseSession(text: string, stopUuid?: string): Chat {
           }
         }
       } else {
+        if (typeof d.message?.model === 'string' && d.message.model !== '<synthetic>') chat.model = d.message.model;
         if (said && isNotice(d, said)) items.push({ role: 'notice', text: said, uuid, reply });
         else if (said) {
           items.push({ role: 'claude', text: said, uuid, reply });
           if (reply !== undefined) replies[reply].text += (replies[reply].text ? '\n\n' : '') + said;
         }
         if (label && reply !== undefined) replies[reply].label = label;
-        const tools = blocks.filter((b) => b?.type === 'tool_use').map((b) => String(b.name));
+        const uses = blocks.filter((b) => b?.type === 'tool_use');
+        const tools = uses.map((b) => String(b.name));
         if (tools.length) {
-          const last = items[items.length - 1];
+          const paths = uses.filter((b) => WRITERS.includes(b.name) && typeof b.input?.file_path === 'string').map((b) => b.input.file_path as string);
+          let last = items[items.length - 1];
           if (last?.role === 'tool' && last.text.startsWith('Tools: ')) last.text += ', ' + tools.join(', ');
-          else items.push({ role: 'tool', text: 'Tools: ' + tools.join(', '), reply });
+          else items.push((last = { role: 'tool', text: 'Tools: ' + tools.join(', '), reply }));
+          if (paths.length) last.paths = [...(last.paths ?? []), ...paths];
         }
         const stop = d.message?.stop_reason;
         chat.working = stop ? stop === 'tool_use' : tools.length > 0 || !raw;
