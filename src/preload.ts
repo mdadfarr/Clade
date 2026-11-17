@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('api', {
   start: (cols: number, rows: number) => ipcRenderer.send('start', cols, rows),
@@ -19,6 +19,45 @@ contextBridge.exposeInMainWorld('api', {
   onData: (cb: (data: string) => void) => ipcRenderer.on('pty-data', (_e, d) => cb(d)),
   onCards: (cb: (cards: unknown) => void) => ipcRenderer.on('cards', (_e, c) => cb(c)),
   onShowTerm: (cb: (why: string) => void) => ipcRenderer.on('show-term', (_e, w) => cb(w)),
+  wheelLog: process.argv.includes('--wheel-log'),
+  logWheel: (line: string) => ipcRenderer.send('wheel-log', line),
   answerCard: (id: string, answer: unknown) => ipcRenderer.send('card-answer', id, answer),
-  onDesign: (cb: (design: unknown, error: string | null) => void) => ipcRenderer.on('design', (_e, d, err) => cb(d, err)),
+  onDesign: (cb: (design: unknown, error: string | null, info: string | null, theme: string, looks: unknown) => void) =>
+    ipcRenderer.on('design', (_e, d, err, info, theme, looks) => cb(d, err, info, theme, looks)),
+  onChats: (cb: (chats: unknown) => void) => ipcRenderer.on('chats', (_e, c) => cb(c)),
+  newChat: () => ipcRenderer.send('new-chat'),
+  // message box controls
+  pathOf: (file: File) => webUtils.getPathForFile(file), // the path of a dropped file; the file itself is not read
+  pickFiles: () => ipcRenderer.invoke('pick-files'),
+  statFiles: (paths: string[]) => ipcRenderer.invoke('stat-files', paths),
+  savePaste: (bytes: Uint8Array, mime: string) => ipcRenderer.invoke('save-paste', bytes, mime),
+  stop: () => ipcRenderer.send('stop'),
+  setOptions: (patch: unknown) => ipcRenderer.send('set-options', patch),
+  nextMode: () => ipcRenderer.send('next-mode'),
+  zoom: (dir: number) => ipcRenderer.send('zoom', dir),
+  onSettings: (cb: (s: unknown) => void) => ipcRenderer.on('settings', (_e, s) => cb(s)),
+  onShortcut: (cb: (name: string) => void) => ipcRenderer.on('shortcut', (_e, n) => cb(n)),
+  skillsList: () => ipcRenderer.invoke('skills-list'),
+  skillSwitch: (name: string, on: boolean) => ipcRenderer.invoke('skill-switch', name, on),
+  skillAdd: () => ipcRenderer.invoke('skill-add'),
+  designSet: (patch: unknown) => ipcRenderer.send('design-set', patch),
+  onAccount: (cb: (a: unknown) => void) => ipcRenderer.on('account', (_e, a) => cb(a)),
+  accountRefresh: () => ipcRenderer.send('account-refresh'),
+  showUsage: () => ipcRenderer.send('show-usage'),
+  usageOpen: () => ipcRenderer.invoke('usage-open'),
+  usageClose: () => ipcRenderer.send('usage-close'),
+  saveDrawing: (svg: string, name: string) => ipcRenderer.send('save-drawing', svg, name),
+  openSource: () => ipcRenderer.send('open-source'),
+  helpText: () => ipcRenderer.invoke('help-text'),
+  appVersion: () => ipcRenderer.invoke('app-version'),
+  resetDesign: () => ipcRenderer.send('reset-design'),
+  openFolder: () => ipcRenderer.send('open-folder'),
+  openArtifact: (name: string, version?: number) => ipcRenderer.send('artifact-open', name, version),
+  stepArtifact: (delta: number) => ipcRenderer.send('artifact-step', delta),
+  reloadArtifact: () => ipcRenderer.send('artifact-reload'),
+  closeArtifact: () => ipcRenderer.send('artifact-close'),
+  revealArtifact: () => ipcRenderer.send('artifact-reveal'),
+  artifactBounds: (b: unknown) => ipcRenderer.send('artifact-bounds', b),
+  onArtifacts: (cb: (list: unknown) => void) => ipcRenderer.on('artifacts', (_e, l) => cb(l)),
+  onArtifactShown: (cb: (shown: unknown) => void) => ipcRenderer.on('artifact-shown', (_e, s) => cb(s)),
 });
