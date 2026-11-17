@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
 import { answerBody, answeredCalls, CardView, HOOK_MARK, makeCard, mergeHook, parseHookInput } from './cards';
-import { DEFAULT_DESIGN, parseDesign } from './design';
+import { DEFAULT_DESIGN_V1 as DEFAULT_DESIGN, parseDesignV1 as parseDesign } from './design-v1';
 
 const { timeLeft: tl, CARD_LIFETIME_MS } = require('./timeleft') as { timeLeft: typeof timeLeft; CARD_LIFETIME_MS: number };
 
@@ -12,38 +12,38 @@ test('time left counts from the request arrival, 590 s', () => {
   const expires = arrived + CARD_LIFETIME_MS;
   assert.strictEqual(CARD_LIFETIME_MS, 590_000);
   const fresh = tl(expires, arrived);
-  assert.deepStrictEqual(fresh, { ms: 590_000, fraction: 1, text: '9:50 left', level: 'normal' });
-  // shown later (switched sessions and came back): the real time left, not a fresh 9:50
+  assert.deepStrictEqual(fresh, { ms: 590_000, fraction: 1, level: 'normal' }); // no time text
+  // shown later (switched sessions and came back): the real time left, not a fresh bar
   const later = tl(expires, arrived + 26_000);
-  assert.strictEqual(later.text, '9:24 left');
   assert.strictEqual(later.ms, 564_000);
   assert.ok(Math.abs(later.fraction - 564 / 590) < 1e-9);
 });
 
-test('time left rounds partial seconds up and pads seconds', () => {
-  assert.strictEqual(tl(10_000, 0 + 10_000 - 61_500).text, '1:02 left');
-  assert.strictEqual(tl(10_000, 10_000 - 1).text, '0:01 left');
-  assert.strictEqual(tl(10_000, 10_000 - 9_000).text, '0:09 left');
+test('time bar: the used part (1 - fraction) grows from 0 to 1', () => {
+  const used = (elapsed: number) => 1 - tl(CARD_LIFETIME_MS, elapsed).fraction;
+  assert.strictEqual(used(0), 0);
+  assert.ok(Math.abs(used(295_000) - 0.5) < 1e-9);
+  assert.strictEqual(used(590_000), 1);
+  assert.ok(used(100_000) < used(200_000));
 });
 
-test('time left level: urgent under 30 s (by the shown seconds), else normal', () => {
+test('time left level: urgent under 30 s (whole seconds, rounded up), else normal', () => {
   const at = (msLeft: number) => tl(msLeft, 0).level;
   assert.strictEqual(at(590_000), 'normal');
   assert.strictEqual(at(120_000), 'normal');
   assert.strictEqual(at(30_000), 'normal');
-  assert.strictEqual(at(29_001), 'normal'); // shows "0:30 left"
-  assert.strictEqual(at(29_000), 'urgent'); // shows "0:29 left"
+  assert.strictEqual(at(29_001), 'normal'); // still 30 s
+  assert.strictEqual(at(29_000), 'urgent');
   assert.strictEqual(at(1), 'urgent');
 });
 
 test('time left at and after 0 is expired, never negative', () => {
-  assert.deepStrictEqual(tl(5_000, 5_000), { ms: 0, fraction: 0, text: '0:00 left', level: 'expired' });
-  assert.deepStrictEqual(tl(5_000, 99_000), { ms: 0, fraction: 0, text: '0:00 left', level: 'expired' });
+  assert.deepStrictEqual(tl(5_000, 5_000), { ms: 0, fraction: 0, level: 'expired' });
+  assert.deepStrictEqual(tl(5_000, 99_000), { ms: 0, fraction: 0, level: 'expired' });
 });
 
 test('time left never shows more than the lifetime (clock skew)', () => {
   assert.strictEqual(tl(2_000_000, 0).fraction, 1);
-  assert.strictEqual(tl(2_000_000, 0).text, '9:50 left');
 });
 
 test('design.json timer colors: defaults, custom, invalid', () => {
