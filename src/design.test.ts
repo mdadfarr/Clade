@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
-import { DEFAULT_DESIGN, parseDesign } from './design';
+import { DEFAULT_DESIGN_V1 as DEFAULT_DESIGN, parseDesignV1 as parseDesign } from './design-v1';
 import { cutSession, parseSession, stripStyleTags } from './session';
 
 const good = {
