@@ -62,6 +62,20 @@ export function stripStyleTags(s: string): string {
   return s.replace(/\{(?:(?:c|s)=[^\s{}]+(?: (?:c|s)=[^\s{}]+)?|fx=[a-z]+|[a-z]+(?: [a-z]+)?)\}([^]*?)\{\/\}/g, '$1');
 }
 
+// Claude Code wraps a long paste in <pasted_content id="..."> ... </pasted_content id="...">. The app sends
+// every message with several lines as a paste, so a long message is stored that way. Only the text inside
+// is the user's message.
+const PASTED_TAG = /[ \t]*<\\?\/?pasted_content(?:\s+id="[^"<>\n]*")?\s*>[ \t]*\n?/g;
+export function unwrapPasted(s: string): string {
+  return s.replace(PASTED_TAG, '');
+}
+
+// User lines Claude Code writes itself, not typed by the user: slash commands and their output, shell
+// commands typed with "!", hook and memory notes. Only these known tags are hidden; any other text that
+// starts with "<" is a real message.
+const INJECTED = /^<(command-(name|message|args)|local-command-(stdout|stderr|caveat)|system-reminder|bash-(input|stdout|stderr)|user-memory-input|user-prompt-submit-hook|task-notification)>/;
+export const isInjected = (s: string) => INJECTED.test(s);
+
 /** A message Claude Code wrote itself (usage limit, API error, "No response requested."), not Claude's own reply. */
 function isNotice(d: any, said: string): boolean {
   return d.message?.model === '<synthetic>' || d.isApiErrorMessage === true || /^You've hit your .*limit/.test(said);
@@ -86,14 +100,15 @@ export function parseSession(text: string, stopUuid?: string): Chat {
       if (!chat.created && typeof d.timestamp === 'string') chat.created = d.timestamp;
       const content = d.message?.content;
       const blocks: any[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
-      const raw = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim();
+      const joined = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+      const raw = (d.type === 'user' ? unwrapPasted(joined) : joined).trim();
       const { text: said, label } = d.type === 'assistant' ? takeLabel(raw) : { text: raw, label: '' };
       const reply = replies.length ? replies.length - 1 : undefined;
 
       if (d.type === 'user') {
         if (blocks.some((b) => b?.type === 'tool_result')) chat.working = true;
-        if (said && !said.startsWith('<')) {
-          // (lines starting with "<" are slash commands and injected notes)
+        if (said && !isInjected(said)) {
+          // (Claude Code's own lines: slash commands, command output, injected notes)
           if (said.startsWith('[Request interrupted')) {
             items.push({ role: 'tool', text: 'Interrupted', reply });
             chat.working = false;
