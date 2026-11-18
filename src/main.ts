@@ -185,8 +185,10 @@ function saveBranches(): void {
   branchesError = null;
 }
 
-let sessionId = ''; // the session shown in the chat and running in the terminal
-let currentChat: Chat | null = null; // that session's own file, or null if it has no file yet
+let sessionId = ''; // the session running in the terminal
+let viewId = ''; // the session shown in the chat. Opening an old chat only shows it; claude starts for it
+// when the user sends a message there, so a chat that is working keeps running meanwhile.
+let currentChat: Chat | null = null; // the running session's own file, or null if it has no file yet
 let chatKey = '';
 let treeKey = '';
 // A Retry waiting to type its one message into the new branch. Only set by a Retry click.
@@ -196,19 +198,23 @@ let pending: { id: string; stage: 'waiting' | 'sent'; count: number } | null = n
 function pollSession(): void {
   if (!sessionId || !win) return;
   try {
-    // 1. Chat of the current session.
-    const branch = branches.find((b) => b.id === sessionId);
-    const ownKey = statKey(sessionFile(sessionId));
-    const key = `${sessionId}|${ownKey}|${ownKey ? '' : branch ? statKey(sessionFile(branch.parent)) : ''}|${pending?.stage ?? ''}`;
+    // 0. The running session (cached by size and time): is it working?
+    currentChat = readSession(sessionId);
+    const live = viewId === sessionId;
+    const runningBusy = !!currentChat?.working || !!pending;
+    // 1. Chat of the session on screen.
+    const branch = branches.find((b) => b.id === viewId);
+    const ownKey = statKey(sessionFile(viewId));
+    const key = `${viewId}|${sessionId}|${ownKey}|${ownKey ? '' : branch ? statKey(sessionFile(branch.parent)) : ''}|${pending?.stage ?? ''}|${runningBusy}`;
     if (key !== chatKey) {
       chatKey = key;
-      currentChat = readSession(sessionId);
       if (pending && (pending.id !== sessionId || (pending.stage === 'sent' && (currentChat?.replies.length ?? 0) > pending.count))) {
         pending = null;
         chatKey = ''; // send once more without the pending flag
       }
-      let shown = currentChat;
-      let empty = !!(currentChat && branch && currentChat.lastAny === branch.forkUuid);
+      const viewChat = live ? currentChat : readSession(viewId);
+      let shown = viewChat;
+      let empty = !!(viewChat && branch && viewChat.lastAny === branch.forkUuid);
       if (!shown && branch?.forkUuid) {
         // a branch made with --fork-session before cut files: show the parent up to the fork point
         const parentText = fs.existsSync(sessionFile(branch.parent)) ? fs.readFileSync(sessionFile(branch.parent), 'utf8') : '';
@@ -228,9 +234,11 @@ function pollSession(): void {
         }
       }
       if (empty && !pending) items.push({ role: 'tool', text: 'Empty branch: messages up to the fork point. Send a message to start it.' });
-      const replies = (currentChat?.replies ?? []).map((r) => ({ id: r.id, copy: r.copy, branch: !!r.forkUuid, retry: r.first || !!r.retryCut }));
-      const canBranch = !!currentChat?.replies.at(-1)?.forkUuid;
-      win.webContents.send('chat', { session: sessionId, model: currentChat?.model ?? '', items, replies, working: (shown?.working ?? false) || !!pending, canBranch });
+      const replies = (viewChat?.replies ?? []).map((r) => ({ id: r.id, copy: r.copy, branch: !!r.forkUuid, retry: r.first || !!r.retryCut }));
+      const canBranch = !!viewChat?.replies.at(-1)?.forkUuid;
+      // live: this chat runs in the terminal. elsewhere: another chat is working (this one is only shown).
+      const working = live && ((shown?.working ?? false) || !!pending);
+      win.webContents.send('chat', { session: viewId, model: viewChat?.model ?? '', items, replies, working, canBranch, live, elsewhere: !live && runningBusy });
     }
 
     checkCards();
@@ -238,12 +246,13 @@ function pollSession(): void {
     // 2. Chat list (one line per root session with all its branches) and the reply graph of the
     //    current chat, from every session file in the project's session folder plus branches.json.
     const files = fs.existsSync(sessionDir()) ? fs.readdirSync(sessionDir()).filter((n) => UUID.test(n.replace(/\.jsonl$/, '')) && n.endsWith('.jsonl')) : [];
-    const tKey = [sessionId, statKey(branchesFile()), ...files.map((n) => n + statKey(path.join(sessionDir(), n)))].join('|');
+    const tKey = [viewId, sessionId, String(runningBusy), statKey(branchesFile()), ...files.map((n) => n + statKey(path.join(sessionDir(), n)))].join('|');
     if (tKey === treeKey) return;
     treeKey = tKey;
     loadBranches();
     const ids = new Set(files.map((n) => n.slice(0, -6)));
     ids.add(sessionId);
+    ids.add(viewId);
     const mtime = (id: string) => {
       try {
         return fs.statSync(sessionFile(id)).mtimeMs;
@@ -251,12 +260,13 @@ function pollSession(): void {
         return 0;
       }
     };
-    const chats = buildChats([...ids].map((id) => ({ id, chat: readSession(id), mtime: mtime(id) })), branches, sessionId, Date.now());
-    win.webContents.send('chats', chats.map(({ sessions: _s, ...row }) => row));
-    const mine = chats.find((c) => c.current)?.sessions ?? [sessionId];
-    const graph = buildGraph(mine.map((id) => ({ id, chat: readSession(id) })), branches, sessionId);
+    const chats = buildChats([...ids].map((id) => ({ id, chat: readSession(id), mtime: mtime(id) })), branches, viewId, Date.now());
+    // running: the chat whose claude is working now (the list marks it, so it can be found again)
+    win.webContents.send('chats', chats.map(({ sessions, ...row }) => ({ ...row, running: runningBusy && sessions.includes(sessionId) })));
+    const mine = chats.find((c) => c.current)?.sessions ?? [viewId];
+    const graph = buildGraph(mine.map((id) => ({ id, chat: readSession(id) })), branches, viewId);
     const nodes = layoutGraph(graph.nodes).map((p) => ({ ...p.node, x: p.x, y: p.y }));
-    win.webContents.send('graph', { nodes, current: graph.current, session: sessionId, error: branchesError });
+    win.webContents.send('graph', { nodes, current: graph.current, session: viewId, error: branchesError });
   } catch (e) {
     console.error('session poll:', e);
   }
@@ -467,7 +477,7 @@ function runClaude(id: string, args: string[]): void {
   const old = term;
   term = null;
   old?.kill();
-  sessionId = id;
+  sessionId = viewId = id;
   ran.add(id);
   chatKey = treeKey = cardsKey = '';
   win?.webContents.send('term-reset');
@@ -757,10 +767,9 @@ app.whenReady().then(async () => {
   // Branch (user click only): new branch ending at that reply (no id: the newest reply). From the
   // graph, the reply may belong to another session (given as `from`); the same branch logic applies.
   ipcMain.on('branch', (_e, replyId?: unknown, from?: unknown) => {
-    const current = readSession(sessionId);
-    if (current?.working || pending) return;
-    const parent = typeof from === 'string' && UUID.test(from) ? from : sessionId;
-    const chat = parent === sessionId ? current : readSession(parent);
+    if (readSession(sessionId)?.working || pending) return; // a branch restarts claude: not while it works
+    const parent = typeof from === 'string' && UUID.test(from) ? from : viewId;
+    const chat = readSession(parent);
     if (!chat) return;
     const r = typeof replyId === 'string' ? chat.replies.find((x) => x.id === replyId) : chat.replies.at(-1);
     if (r?.forkUuid) newBranch(parent, r.forkUuid, firstWords(r.text) || '(fork)');
@@ -768,11 +777,11 @@ app.whenReady().then(async () => {
 
   // Retry (user click only): new branch ending right before that reply, then send its user message once.
   ipcMain.on('retry', (_e, replyId: unknown) => {
-    const chat = readSession(sessionId);
-    if (!chat || chat.working || pending || typeof replyId !== 'string') return;
+    const chat = readSession(viewId);
+    if (!chat || readSession(sessionId)?.working || pending || typeof replyId !== 'string') return;
     const r = chat.replies.find((x) => x.id === replyId);
     if (!r?.text || (!r.first && !r.retryCut)) return;
-    const id = newBranch(sessionId, r.first ? null : r.retryCut, 'retry: ' + firstWords(r.userText));
+    const id = newBranch(viewId, r.first ? null : r.retryCut, 'retry: ' + firstWords(r.userText));
     if (!id || !term) return;
     pending = { id, stage: 'waiting', count: chat.replies.indexOf(r) };
     typeWhenReady(term, r.userText);
@@ -799,16 +808,22 @@ app.whenReady().then(async () => {
   // New chat (user click only): a fresh session, started exactly like the one at app start.
   ipcMain.on('new-chat', () => {
     if (currentChat?.working || pending) return;
-    if (!currentChat && !branches.some((b) => b.id === sessionId)) return; // already on an empty new chat
+    if (!currentChat && !branches.some((b) => b.id === sessionId)) {
+      viewId = sessionId; // the running one is an empty new chat already: just show it
+      chatKey = treeKey = '';
+      return;
+    }
     const id = randomUUID();
     runClaude(id, ['--session-id', id]);
   });
 
   // Chat list or graph click (user click only): switch to that session.
   ipcMain.on('open-session', (_e, id: string) => {
-    if (typeof id !== 'string' || !UUID.test(id) || id === sessionId || currentChat?.working || pending) return;
+    // Only shows the chat. Nothing is started until the user sends a message in it (chat-send).
+    if (typeof id !== 'string' || !UUID.test(id) || id === viewId) return;
     loadBranches();
-    openSession(id);
+    viewId = id;
+    chatKey = treeKey = '';
   });
   // ---- message box controls. Every handler runs on a user click or key; each re-checks its input. ----
   const idle = () => !!term && !currentChat?.working && !pending;
@@ -872,7 +887,8 @@ app.whenReady().then(async () => {
   ipcMain.on('set-options', (_e, patch: unknown) => {
     const before = settings;
     const next = applySettings(settings, patch);
-    const restart = next.model !== before.model || next.effort !== before.effort;
+    // A new model or effort restarts the running chat; while another chat is only shown, it applies at the next start.
+    const restart = (next.model !== before.model || next.effort !== before.effort) && viewId === sessionId;
     if (restart && !idle() && ran.size) return void win?.webContents.send('note', 'Wait until Claude has finished, then change the model or thinking level.');
     saveSettings(patch);
     if (restart && term) {
@@ -942,7 +958,21 @@ app.whenReady().then(async () => {
 
   ipcMain.on('pty-write', (_e, d: string) => term?.write(d)); // only what the user types
   // Chat text box: type the user's text into the terminal, then press Enter. Only on the user's Enter.
-  ipcMain.on('chat-send', (_e, text: unknown) => typeof text === 'string' && typeText(text));
+  ipcMain.on('chat-send', (_e, text: unknown) => {
+    if (typeof text !== 'string') return;
+    if (viewId === sessionId) return typeText(text);
+    // A chat that was only shown: start claude on it now, then type the message once it is ready.
+    if (!idle()) {
+      win?.webContents.send('note', 'Claude is still working in another chat. Send this when it has finished.');
+      return void win?.webContents.send('prefill', text);
+    }
+    loadBranches();
+    const count = readSession(viewId)?.replies.length ?? 0;
+    openSession(viewId);
+    if (!term) return;
+    pending = { id: viewId, stage: 'waiting', count };
+    typeWhenReady(term, text);
+  });
 
   // ---- sidebar menu: account (read only), usage, help, the one fixed link ----
   ipcMain.on('account-refresh', () => refreshAccount(false));

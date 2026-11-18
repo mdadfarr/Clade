@@ -84,6 +84,8 @@ interface ChatView {
   replies?: { id: string; copy: string; branch: boolean; retry: boolean }[];
   working: boolean;
   canBranch?: boolean;
+  live?: boolean; // this chat runs in the terminal (false: an old chat that is only shown)
+  elsewhere?: boolean; // another chat is working while this one is shown
 }
 interface GNode {
   id: string;
@@ -146,6 +148,7 @@ interface ChatRow {
   branches: number;
   open: string; // the session a click opens
   current: boolean;
+  running?: boolean; // its claude is working now
 }
 
 
@@ -264,7 +267,13 @@ function renderChat(): void {
       actions(parent, item.reply);
     }
   });
-  byId('working').hidden = !busy();
+  // Another chat is working while this one is shown: say so quietly (this chat can be read, not sent to yet).
+  const w = byId('working');
+  w.hidden = !busy() && !chat.elsewhere;
+  w.classList.toggle('elsewhere', !busy() && !!chat.elsewhere);
+  w.lastElementChild!.textContent = !busy() && chat.elsewhere
+    ? 'Claude is working in another chat. You can read this one; send here when it has finished.'
+    : 'Claude is working. If nothing happens, press Cmd+J to see the terminal.';
   renderControls();
   const before = !!livePreview;
   readPreview();
@@ -287,7 +296,7 @@ const head = (s: string) => s.split('\n')[0].replace(/\s+/g, ' ').trim().slice(0
 function readPreview(): void {
   previewTimer = 0;
   let next = '';
-  if (busy()) {
+  if (busy() && chat.live !== false) { // the terminal holds the running chat only
     const b = term.buffer.active;
     const lines: string[] = [];
     for (let i = Math.max(0, b.length - 500); i < b.length; i++) lines.push(b.getLine(i)?.translateToString(true) ?? '');
@@ -599,10 +608,6 @@ function openNode(n: GNode): void {
   wantReply = n.reply;
   scrollUntil = Date.now() + 15000;
   if (n.session === graph.session) return scrollToReply();
-  if (busy()) {
-    wantReply = '';
-    return showNote('Cannot switch sessions while Claude is working.', 6000);
-  }
   // Keep the old chat out of sight until the new one is on screen (onChat shows it again).
   centerEl.style.opacity = '0';
   clearTimeout(revealTimer);
@@ -1068,6 +1073,7 @@ function growInput(): void {
 }
 function sendInput(): void {
   if (!input.value.trim() && !chips.length) return;
+  if (chat.elsewhere) return showNote('Claude is still working in another chat. Send this when it has finished.', 6000);
   lastSent = buildMessage(input.value, chips); // attachments go as paths only; Claude Code reads the files
   api.send(lastSent);
   input.value = '';
@@ -1606,7 +1612,7 @@ function renderChats(): void {
   let group = '';
   for (const c of chats) {
     if (c.group !== group) add(box, 'div', 'chatgroup').textContent = group = c.group;
-    const row = add(box, 'button', 'chatrow' + (c.current ? ' current' : '') + (busy() ? ' busy' : ''));
+    const row = add(box, 'button', 'chatrow' + (c.current ? ' current' : '') + (c.running ? ' running' : ''));
     add(row, 'span', 'chattitle').textContent = c.title;
     if (c.branches) {
       const n = add(row, 'span', 'chatcount');
@@ -1614,18 +1620,24 @@ function renderChats(): void {
       add(n, 'span').textContent = String(c.branches);
       n.title = c.branches === 1 ? '1 branch (see the graph)' : `${c.branches} branches (see the graph)`;
     }
-    row.title = `${c.full}\n${c.updated ? new Date(c.updated).toLocaleString() : ''}` + (c.current ? '' : busy() ? '\nDisabled while Claude is working' : '');
+    if (c.running) {
+      const d = add(row, 'span', 'chatdots');
+      d.setAttribute('aria-label', 'Claude is working here');
+      for (let i = 0; i < 3; i++) add(d, 'i');
+    }
+    // Opening a chat only shows it; Claude starts there when you send a message.
+    row.title = `${c.full}\n${c.updated ? new Date(c.updated).toLocaleString() : ''}` + (c.running ? '\nClaude is working here' : '');
     row.addEventListener('click', () => {
       if (c.current) return;
-      if (busy()) return showNote('Cannot switch chats while Claude is working.', 6000);
       document.body.classList.remove('sideopen');
       api.openSession(c.open);
     });
   }
   byId('chattitle').textContent = chats.find((c) => c.current)?.title ?? '';
   const nc = byId('newchat');
-  nc.setAttribute('aria-disabled', String(busy()));
-  nc.title = busy() ? 'Disabled while Claude is working' : 'Start a new chat';
+  const off = busy() || !!chat.elsewhere;
+  nc.setAttribute('aria-disabled', String(off));
+  nc.title = off ? 'Disabled while Claude is working' : 'Start a new chat';
 }
 api.onChats((c) => {
   chats = c;
