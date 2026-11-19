@@ -31,6 +31,7 @@ export interface Chat {
   first: string; // the first message the user typed
   model: string; // the model that wrote the newest reply ('' if none yet)
   created: string | null; // timestamp of the first message
+  title: string; // a name given with Claude Code's own /rename ('' if none)
 }
 
 const CHAINED = ['user', 'assistant', 'system', 'attachment'];
@@ -83,7 +84,7 @@ function isNotice(d: any, said: string): boolean {
 
 /** Parse a session file. With stopUuid, stop after that line (used to show a parent up to a fork point). */
 export function parseSession(text: string, stopUuid?: string): Chat {
-  const chat: Chat = { items: [], replies: [], working: false, lastUuid: null, lastAny: null, first: '', model: '', created: null };
+  const chat: Chat = { items: [], replies: [], working: false, lastUuid: null, lastAny: null, first: '', model: '', created: null, title: '' };
   const { items, replies } = chat;
   for (const line of text.split('\n')) {
     let d: any;
@@ -93,6 +94,7 @@ export function parseSession(text: string, stopUuid?: string): Chat {
       continue; // empty or half-written line
     }
     if (!d || d.isSidechain) continue;
+    if (d.type === 'custom-title' && typeof d.customTitle === 'string') chat.title = d.customTitle.trim();
     const uuid = typeof d.uuid === 'string' ? d.uuid : undefined;
     if (uuid && CHAINED.includes(d.type)) chat.lastAny = uuid;
     if (!d.isMeta && (d.type === 'user' || d.type === 'assistant')) {
@@ -113,6 +115,8 @@ export function parseSession(text: string, stopUuid?: string): Chat {
             items.push({ role: 'tool', text: 'Interrupted', reply });
             chat.working = false;
           } else {
+            // The message before got no answer at all (stopped before the first word): say so.
+            if (chat.working && items.at(-1)?.role === 'user') items.push({ role: 'tool', text: 'Interrupted', reply });
             const parent = typeof d.parentUuid === 'string' ? d.parentUuid : null;
             if (replies.length) replies[replies.length - 1].forkUuid = parent;
             const created = typeof d.timestamp === 'string' ? d.timestamp : '';
@@ -152,6 +156,17 @@ export function parseSession(text: string, stopUuid?: string): Chat {
     if (!r.label) r.label = firstWordsOf(r.copy, 3);
   }
   return chat;
+}
+
+/**
+ * A turn Claude Code ended without writing so: a Stop before the first word of the reply leaves only
+ * the user's message in the file (2.1.328), and a chat resumed after that starts idle. The chat as
+ * not working, with an "Interrupted" line under that message.
+ */
+export function settle(chat: Chat): Chat {
+  if (!chat.working) return chat;
+  const reply = chat.replies.length ? chat.replies.length - 1 : undefined;
+  return { ...chat, working: false, items: [...chat.items, { role: 'tool', text: 'Interrupted', reply }] };
 }
 
 /**

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
-import { cutSession, isInjected, parseSession, unwrapPasted } from './session';
+import { cutSession, isInjected, parseSession, settle, unwrapPasted } from './session';
 
 // Shapes as Claude Code 2.1.327 writes them (made-up text).
 const line = (o: object) => JSON.stringify(o);
@@ -62,4 +62,20 @@ test('branch after two tool calls in one message: the side answer is kept, the c
   assert.ok(cut.trim().split('\n').every((l) => JSON.parse(l).sessionId === 'new'));
   // a cut before the answers still refuses
   assert.throws(() => cutSession(file, 'a2', 'new'), /between a tool call and its result/);
+});
+
+test('a Stop before the first word: the file ends at the message; settle shows it as over, with "Interrupted"', () => {
+  const file = [user('u1', null, 'Think hard, then list primes.')].join('\n');
+  const chat = parseSession(file);
+  assert.strictEqual(chat.working, true);
+  const done = settle(chat);
+  assert.strictEqual(done.working, false);
+  assert.deepStrictEqual(done.items.map((i) => [i.role, i.text]), [['user', 'Think hard, then list primes.'], ['tool', 'Interrupted']]);
+  assert.strictEqual(done.items[1].reply, 0);
+  assert.strictEqual(settle(done), done); // a finished chat is left as it is
+});
+
+test('a message with no answer at all, then the next message: "Interrupted" stays between them', () => {
+  const file = [user('u1', null, 'first'), user('u2', 'u1', 'second'), said('a2', 'u2', 'Reply.')].join('\n');
+  assert.deepStrictEqual(parseSession(file).items.map((i) => i.text), ['first', 'Interrupted', 'second', 'Reply.']);
 });
