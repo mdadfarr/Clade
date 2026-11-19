@@ -99,6 +99,18 @@ A **callout**:
 > [!tip]
 > Hover a reply to Copy, Retry or Branch.
 
+## Your chats
+
+Hover a message of yours and click the pencil to edit it. Send makes a new branch without that message and what came after, and sends the new text there; the old version stays, and the arrows under the reply step between them.
+
+Hover a chat in the list and click the pencil to rename it, or double-click the title at the top. Leave the name empty to go back to its own title. A name given with Claude Code's own `/rename` shows too.
+
+Drag the right edge of the chat list to make it wider or narrower. Double-click the edge to go back to the usual width.
+
+Stop (or `Esc`) before Claude has written anything puts your message back in the box, as Claude Code does in its own box.
+
+The model picker's Default names the model Claude Code chose the last time it started without one.
+
 ## Attaching files
 
 Press `Cmd+U`, drop files on the window, or paste an image. Each file shows as a chip above the message box. Only the file's path goes into your message; Claude Code reads the file itself. A pasted image is first saved into the project's `attachments` folder, because it has no path of its own.
@@ -110,6 +122,7 @@ In the project folder:
 - `design.json`: how the app looks (Settings writes it; so can Claude).
 - `CLAUDE.md`: the app keeps one marked section in it; the rest is yours.
 - `branches.json`: which chat was branched from which reply.
+- `chat-names.json`: names you gave chats in the app (Claude Code's own files are never changed).
 - `artifacts/`: files Claude makes for you to keep; the side panel opens on one as soon as Claude writes it. Saved versions are in `artifacts/.versions`.
 - `attachments/`: pasted images.
 - `.claude/settings.local.json`: the permission-card hook, the artifact rule, and skill switches. Only those entries are added; nothing else in the file is changed.

@@ -27,8 +27,13 @@ body.dark ::selection { background: #f2d23a; color: #1d1c1a; }
 #center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
 /* ---- sidebar: one line per chat ---- */
-#sidebar { width: var(--sidebar-width); flex-shrink: 0; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); }
+#sidebar { position: relative; width: var(--sidebar-width); flex-shrink: 0; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); }
 body.nosidebar #sidebar { display: none; }
+/* drag the right edge of the chat list to change its width */
+#sidegrip { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 5; }
+#sidegrip::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background 0.12s; }
+#sidegrip:hover::after, #sidegrip.drag::after, #sidegrip:focus-visible::after { background: var(--accent-fill); }
+body.sizing, body.sizing * { cursor: col-resize !important; user-select: none !important; }
 #brand { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; font-weight: 700; font-size: 15px; letter-spacing: 0.01em; }
 #brand svg { color: var(--t-accent); }
 #newchat { margin: 0 12px 8px; padding: 7px 10px; text-align: left; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
@@ -83,6 +88,11 @@ body.nosidebar #sidebar { display: none; }
 .chatrow:hover { background: var(--raised); }
 .chatrow.current { background: var(--raised); font-weight: 600; }
 .chattitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chatpen { flex-shrink: 0; display: none; align-items: center; padding: 2px; border-radius: 4px; color: var(--muted-text); }
+.chatrow:hover .chatpen, .chatrow:focus-visible .chatpen { display: flex; }
+.chatpen:hover { color: var(--text); background: var(--surface); }
+.chatrow.editing { cursor: default; background: var(--raised); padding: 3px 4px; }
+.renamebox { flex: 1; min-width: 0; padding: 3px 6px; border: 1px solid var(--accent-fill); border-radius: 5px; background: var(--surface); color: var(--text); font: inherit; outline: none; }
 .chatcount { flex-shrink: 0; display: flex; align-items: center; gap: 2px; font-size: 11px; font-weight: 400; color: var(--muted-text); }
 
 /* ---- top bar ---- */
@@ -100,6 +110,17 @@ body.nosidebar #sidebar { display: none; }
 #items { display: flex; flex-direction: column; gap: var(--sp-exchange); }
 .user { align-self: flex-end; max-width: 80%; padding: 10px 16px; border-radius: 16px; background: var(--user-bg); color: var(--user-fg);
   font-size: var(--msg-size); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.userwrap { align-self: flex-end; max-width: 80%; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; }
+.userwrap .user { align-self: auto; max-width: 100%; }
+.useracts { opacity: 0; transition: opacity 0.12s; }
+.userwrap:hover .useracts, .useracts:focus-within { opacity: 1; }
+.user.editing { width: min(640px, 100%); box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; white-space: normal; }
+.editbox { width: 100%; box-sizing: border-box; resize: none; border: 0; padding: 0; background: none; color: inherit; font: inherit; line-height: 1.5; outline: none; max-height: 40vh; }
+.editrow { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.edithint { flex: 1; font-size: 12px; opacity: 0.7; }
+.editbtn { padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: 13px var(--font-ui); cursor: pointer; }
+.editbtn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-on); }
+.editbtn:disabled { opacity: 0.5; cursor: default; }
 .reply { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin-top: calc(24px - var(--sp-exchange)); }
 .claude { font-family: var(--font-reply); font-size: var(--body-size); line-height: 1.7; overflow-wrap: anywhere; min-width: 0; }
 .claude > :first-child { margin-top: 0; }

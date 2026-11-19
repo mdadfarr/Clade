@@ -10,13 +10,14 @@ import { buildChats } from './chats';
 import { artifactName, mergeAllow } from './artifacts';
 import { registerArtifactScheme, startArtifacts } from './artifact-host';
 import { ACCENT_NAMES, ACCENTS, applyLook, DEFAULT_LOOK, isAccentName, matchLook } from './themes';
-import { applySettings, DEFAULT_SETTINGS, Effort, effortInText, MAX_MODE_PRESSES, Mode, modeInText, MODES, parseSettings, Settings, startFlags, zoomStep } from './settings';
+import { applySettings, DEFAULT_SETTINGS, Effort, clearBoxKeys, effortInText, MAX_MODE_PRESSES, modelInBanner, Mode, modeInText, MODES, parseSettings, Settings, startFlags, stopScreen, validModel, zoomStep } from './settings';
 import { addSkill, listSkills, mergeSkillSwitch } from './skills';
 import { Account, NO_NETWORK_PROFILE, parseAuthStatus, UNKNOWN } from './account';
 import { execFile } from 'child_process';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { pastedName } = require('./composer') as { pastedName(mime: string, when: Date, n: number): string | null };
-import { Chat, ChatItem, cutSession, parseSession } from './session';
+import { Chat, ChatItem, cutSession, parseSession, settle } from './session';
+import { parseNames, setName } from './names';
 import { buildGraph, layoutGraph } from './graph';
 import { Branch, firstWords, parseBranches, UUID } from './branches';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
@@ -125,7 +126,7 @@ function applyZoom(): void {
   win?.webContents.setZoomFactor(settings.zoom);
   artifacts?.setZoom(settings.zoom);
 }
-/** Change settings (user action only), save them, and apply. */
+/** Change settings (user action, or the default model read off the banner), save them, and apply. */
 function saveSettings(patch: unknown): void {
   settings = applySettings(settings, patch);
   try {
@@ -147,6 +148,14 @@ const setTheme = (theme: Theme) => writeDesign({ ...current, theme });
 const sessionDir = () => path.join(os.homedir(), '.claude', 'projects', fs.realpathSync(folder).replace(/[^a-zA-Z0-9]/g, '-'));
 const sessionFile = (id: string) => path.join(sessionDir(), `${id}.jsonl`);
 const branchesFile = () => path.join(folder, 'branches.json');
+const namesFile = () => path.join(folder, 'chat-names.json'); // names given in the app (Claude Code's files are never written)
+function readNames(): Record<string, string> {
+  try {
+    return parseNames(fs.existsSync(namesFile()) ? fs.readFileSync(namesFile(), 'utf8') : null);
+  } catch {
+    return {};
+  }
+}
 const statKey = (f: string) => {
   try {
     const st = fs.statSync(f);
@@ -158,14 +167,16 @@ const statKey = (f: string) => {
 
 // Parsed session files, cached by mtime and size.
 const parsed = new Map<string, { key: string; chat: Chat }>();
+// Turns known to be over that the file does not end (see settle): session id -> uuid of its last
+// message then. While the file still ends at that message, the chat is not working.
+const settled = new Map<string, string>();
 function readSession(id: string): Chat | null {
   const key = statKey(sessionFile(id));
   if (!key) return null;
   const hit = parsed.get(id);
-  if (hit?.key === key) return hit.chat;
-  const chat = parseSession(fs.readFileSync(sessionFile(id), 'utf8'));
-  parsed.set(id, { key, chat });
-  return chat;
+  const chat = hit?.key === key ? hit.chat : parseSession(fs.readFileSync(sessionFile(id), 'utf8'));
+  if (hit?.key !== key) parsed.set(id, { key, chat });
+  return chat.working && chat.lastUuid && settled.get(id) === chat.lastUuid ? settle(chat) : chat;
 }
 
 let branches: Branch[] = [];
@@ -246,7 +257,7 @@ function pollSession(): void {
     // 2. Chat list (one line per root session with all its branches) and the reply graph of the
     //    current chat, from every session file in the project's session folder plus branches.json.
     const files = fs.existsSync(sessionDir()) ? fs.readdirSync(sessionDir()).filter((n) => UUID.test(n.replace(/\.jsonl$/, '')) && n.endsWith('.jsonl')) : [];
-    const tKey = [viewId, sessionId, String(runningBusy), statKey(branchesFile()), ...files.map((n) => n + statKey(path.join(sessionDir(), n)))].join('|');
+    const tKey = [viewId, sessionId, String(runningBusy), statKey(branchesFile()), statKey(namesFile()), ...files.map((n) => n + statKey(path.join(sessionDir(), n)))].join('|');
     if (tKey === treeKey) return;
     treeKey = tKey;
     loadBranches();
@@ -260,7 +271,7 @@ function pollSession(): void {
         return 0;
       }
     };
-    const chats = buildChats([...ids].map((id) => ({ id, chat: readSession(id), mtime: mtime(id) })), branches, viewId, Date.now());
+    const chats = buildChats([...ids].map((id) => ({ id, chat: readSession(id), mtime: mtime(id) })), branches, viewId, Date.now(), readNames());
     // running: the chat whose claude is working now (the list marks it, so it can be found again)
     win.webContents.send('chats', chats.map(({ sessions, ...row }) => ({ ...row, running: runningBusy && sessions.includes(sessionId) })));
     const mine = chats.find((c) => c.current)?.sessions ?? [viewId];
@@ -493,14 +504,27 @@ function runClaude(id: string, args: string[]): void {
     return;
   }
   term = p;
+  // A claude just started is never working, whatever the end of its file says.
+  const atStart = readSession(id);
+  if (atStart?.working && atStart.lastUuid) settled.set(id, atStart.lastUuid);
   // A question in the terminal with no card for it (the hook could not reach the app, a trust
   // prompt, ...): show the terminal.
   let tail = '';
   let ask: NodeJS.Timeout | undefined;
+  // Started without --model: the banner names Claude Code's own default, which the model picker shows.
+  let banner = validModel(settings.model) ? null : '';
   p.onData((d) => {
     if (term !== p) return;
     win?.webContents.send('pty-data', d);
     const text = plain(d);
+    if (banner !== null) {
+      banner = (banner + text).slice(-4000);
+      const seen = modelInBanner(banner);
+      if (seen) {
+        banner = null;
+        if (seen !== settings.seenDefault) saveSettings({ seenDefault: seen });
+      }
+    }
     const mode = modeInText(text);
     const effort = effortInText(text);
     if ((mode && mode !== modeNow) || (effort && effort !== effortNow)) {
@@ -782,15 +806,25 @@ app.whenReady().then(async () => {
   });
 
   // Retry (user click only): new branch ending right before that reply, then send its user message once.
-  ipcMain.on('retry', (_e, replyId: unknown) => {
+  // Retry: a new branch without this reply, and the same message typed again once claude is ready.
+  // Edit: the same, with the user's new text. Both only on the user's click.
+  const resend = (replyId: unknown, text: string | null) => {
     const chat = readSession(viewId);
     if (!chat || readSession(sessionId)?.working || pending || typeof replyId !== 'string') return;
     const r = chat.replies.find((x) => x.id === replyId);
-    if (!r?.text || (!r.first && !r.retryCut)) return;
-    const id = newBranch(viewId, r.first ? null : r.retryCut, 'retry: ' + firstWords(r.userText));
+    if (!r || (!r.first && !r.retryCut) || (text === null && !r.text)) return;
+    const words = text === null ? 'retry: ' + firstWords(r.userText) : 'edit: ' + firstWords(text);
+    const id = newBranch(viewId, r.first ? null : r.retryCut, words);
     if (!id || !term) return;
-    pending = { id, stage: 'waiting', count: chat.replies.indexOf(r) };
-    typeWhenReady(term, r.userText);
+    // Done once the new branch has one more reply than its cut file (not counted from the old chat:
+    // a message stopped before its reply is not on the chain, so the counts can differ).
+    pending = { id, stage: 'waiting', count: readSession(id)?.replies.length ?? 0 };
+    typeWhenReady(term, text ?? r.userText);
+  };
+  ipcMain.on('retry', (_e, replyId: unknown) => resend(replyId, null));
+  ipcMain.on('edit', (_e, replyId: unknown, text: unknown) => {
+    if (typeof text !== 'string' || !text.trim() || text.length > 100_000) return;
+    resend(replyId, text.trim());
   });
 
   // A card click (user click only). Checked against the card; anything that does not fit sends nothing.
@@ -824,6 +858,18 @@ app.whenReady().then(async () => {
   });
 
   // Chat list or graph click (user click only): switch to that session.
+  // Rename a chat (by its root session id): saved in chat-names.json; an empty name clears it.
+  ipcMain.on('rename-chat', (_e, id: unknown, name: unknown) => {
+    if (typeof id !== 'string' || !UUID.test(id)) return;
+    try {
+      const before = fs.existsSync(namesFile()) ? fs.readFileSync(namesFile(), 'utf8') : null;
+      fs.writeFileSync(namesFile(), setName(before, id, name));
+    } catch (e) {
+      win?.webContents.send('note', `Could not rename the chat: ${(e as Error).message}`);
+    }
+    treeKey = '';
+    pollSession();
+  });
   ipcMain.on('open-session', (_e, id: string) => {
     // Only shows the chat. Nothing is started until the user sends a message in it (chat-send).
     if (typeof id !== 'string' || !UUID.test(id) || id === viewId) return;
@@ -869,6 +915,23 @@ app.whenReady().then(async () => {
   });
   // Stop: Esc in the terminal, exactly what the key does there.
   ipcMain.on('stop', () => term?.write('\x1b'));
+  // After a Stop the page sends the bottom of the terminal screen. Once Claude Code no longer offers
+  // "esc to interrupt", its turn is over even if the file does not say so. A message it put back in its
+  // own box is cleared there and goes back into the app's message box, so the next send is not added to it.
+  ipcMain.on('stop-screen', (_e, lines: unknown) => {
+    if (!term || !Array.isArray(lines)) return;
+    const screen = stopScreen(lines.filter((l): l is string => typeof l === 'string').slice(-60));
+    const chat = readSession(sessionId);
+    if (screen.busy || !chat?.working || !chat.lastUuid || pending) return;
+    settled.set(sessionId, chat.lastUuid);
+    chatKey = treeKey = '';
+    const last = chat.replies.at(-1);
+    if (screen.boxLines && last && !last.text) {
+      term.write(clearBoxKeys(screen.boxLines));
+      win?.webContents.send('prefill', last.userText, 'stopped');
+    }
+    pollSession();
+  });
 
   // Mode: Claude Code's own Shift+Tab cycle, pressed until the status line names the chosen mode.
   let cycling = false;
@@ -945,6 +1008,7 @@ app.whenReady().then(async () => {
     if (o.theme === 'system' || o.theme === 'light' || o.theme === 'dark') next.theme = o.theme;
     if (typeof o.effects === 'boolean') next.effects.enabled = o.effects;
     if (typeof o.sidebar === 'boolean') next.layout.sidebar = o.sidebar;
+    if (typeof o.sidebarWidth === 'number' && Number.isFinite(o.sidebarWidth)) next.layout.sidebarWidth = Math.round(Math.min(480, Math.max(160, o.sidebarWidth)));
     // A look: only stored names are accepted, and only stored colors are written (themes.ts).
     const lk = (typeof o.look === 'object' && o.look !== null ? o.look : null) as Record<string, unknown> | null;
     if (lk) {

@@ -16,6 +16,9 @@ declare const api: {
   statFiles(paths: string[]): Promise<Chip[]>;
   savePaste(bytes: Uint8Array, mime: string): Promise<Chip | null>;
   stop(): void;
+  stopScreen(lines: string[]): void;
+  renameChat(id: string, name: string): void;
+  edit(replyId: string, text: string): void;
   setOptions(patch: object): void;
   nextMode(): void;
   zoom(dir: number): void;
@@ -50,7 +53,7 @@ declare const api: {
   retry(replyId: string): void;
   copy(text: string): void;
   onNote(cb: (text: string) => void): void;
-  onPrefill(cb: (text: string) => void): void;
+  onPrefill(cb: (text: string, why?: string) => void): void;
   openSession(id: string): void;
   onGraph(cb: (graph: GraphData) => void): void;
   onToggleGraph(cb: () => void): void;
@@ -81,7 +84,7 @@ interface Card {
 interface ChatView {
   session: string;
   model: string;
-  items: { role: string; text: string; reply?: number }[];
+  items: { role: string; text: string; reply?: number; uuid?: string }[];
   replies?: { id: string; copy: string; branch: boolean; retry: boolean }[];
   working: boolean;
   canBranch?: boolean;
@@ -130,6 +133,7 @@ interface AppSettings {
   mode: string;
   toolsOpen: boolean;
   showAccount: boolean;
+  seenDefault: string; // Claude Code's own default model, from its banner ('' = not seen yet)
   modeNow: string | null; // read back from Claude Code's status line
   effortNow: string | null;
 }
@@ -149,6 +153,8 @@ interface ChatRow {
   branches: number;
   open: string; // the session a click opens
   current: boolean;
+  named: boolean; // a name the user gave it here
+  name: string; // the title before it was cut to fit
   running?: boolean; // its claude is working now
 }
 
@@ -269,6 +275,7 @@ function renderChat(): void {
     const names = item.role === 'tool' ? toolNames(item.text) : null;
     if (names) toolLine(parent, names, `${chat.session}:${i}`);
     else if (item.role === 'artifact') artifactCard(parent, item.text);
+    else if (item.role === 'user') userMessage(col, item.text, chat.replies?.find((r) => r.id === item.uuid));
     else {
       const box = add(parent, 'div', item.role);
       if (item.role === 'claude') renderMarkdown(box, item.text, look);
@@ -336,11 +343,76 @@ function readPreview(): void {
   toBottom();
 }
 
+// ---- a message of the user's: the bubble, and Edit under it on hover. Edit opens the text in place;
+// "Send" makes a new branch without this message and what came after, and sends the new text there
+// (like Retry with other words). Nothing is sent until the user clicks Send or presses Enter. ----
+let editing: { id: string; text: string } | null = null;
+function userMessage(col: HTMLElement, text: string, r: { id: string; retry: boolean } | undefined): void {
+  const wrap = add(col, 'div', 'userwrap');
+  if (r && editing?.id === r.id) {
+    const box = add(wrap, 'div', 'user editing');
+    const area = add(box, 'textarea', 'editbox') as HTMLTextAreaElement;
+    area.value = editing.text;
+    area.setAttribute('aria-label', 'Edit your message');
+    const fit = () => {
+      area.style.height = 'auto';
+      area.style.height = `${area.scrollHeight}px`;
+    };
+    const row = add(box, 'div', 'editrow');
+    add(row, 'span', 'edithint').textContent = 'Sends in a new branch; this version stays in the graph.';
+    const cancel = add(row, 'button', 'editbtn') as HTMLButtonElement;
+    cancel.textContent = 'Cancel';
+    const send = add(row, 'button', 'editbtn primary') as HTMLButtonElement;
+    send.textContent = 'Send';
+    const check = () => (send.disabled = !area.value.trim() || area.value.trim() === text.trim());
+    const go = () => {
+      if (send.disabled || busy() || !editing) return;
+      api.edit(editing.id, area.value.trim());
+      editing = null;
+      renderChat();
+    };
+    const stop = () => {
+      editing = null;
+      renderChat();
+    };
+    area.addEventListener('input', () => {
+      if (editing) editing.text = area.value;
+      fit();
+      check();
+    });
+    area.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') stop();
+      else if (sendsOnKey(e.key, e.shiftKey, e.isComposing, area.value)) {
+        e.preventDefault();
+        go();
+      }
+      e.stopPropagation();
+    });
+    cancel.addEventListener('click', stop);
+    send.addEventListener('click', go);
+    check();
+    requestAnimationFrame(() => {
+      fit();
+      area.focus();
+    });
+    return;
+  }
+  add(wrap, 'div', 'user').textContent = text;
+  if (!r) return;
+  const row = add(wrap, 'div', 'actions useracts');
+  const off = busy() ? 'Disabled while Claude is working' : chat.elsewhere ? 'Claude is working in another chat' : r.retry ? '' : 'Editing is not possible here';
+  iconButton(row, 'edit', 'Edit this message and send it again (in a new branch)', off, () => {
+    editing = { id: r.id, text };
+    renderChat();
+  });
+}
+
 // ---- Copy / Retry / Branch under a reply. Clicks only ask the main process, which re-checks everything. ----
 const circle = (cx: number, cy: number, r: number) => `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`;
 const ICONS: Record<string, string[]> = {
   copy: ['M5.5 5.5h7v8h-7z', 'M3.5 10.5v-8h7'],
   retry: ['M13 8a5 5 0 1 1-1.6-3.7', 'M13 2v3h-3'],
+  edit: ['M10.5 3 13 5.5 6 12.5H3.5V10z', 'm9 4.5 2.5 2.5'],
   branch: [circle(4.5, 3, 1.5), circle(4.5, 13, 1.5), circle(11.5, 5, 1.5), 'M4.5 4.5v7', 'M11.5 6.5c0 3-7 2.5-7 5'],
   prev: ['M10 3 5 8l5 5'],
   next: ['m6 3 5 5-5 5'],
@@ -1029,7 +1101,14 @@ function showNote(text: string, ms: number): void {
   noteTimer = window.setTimeout(() => (note.hidden = true), ms);
 }
 api.onNote((t) => showNote(t, 10000));
-api.onPrefill((t) => {
+api.onPrefill((t, why) => {
+  if (why === 'stopped') {
+    // Stopped before Claude wrote anything: the message comes back here, as Claude Code does in its own box.
+    if (!input.value.trim()) input.value = t;
+    growInput();
+    input.focus();
+    return showNote('Stopped. Your message is back in the box: change it or press Enter to send it again.', 8000);
+  }
   input.value = t; // never sent by the app: the user presses Enter
   growInput();
   input.focus();
@@ -1041,6 +1120,7 @@ const scrollPos = new Map<string, number>();
 api.onChat((c) => {
   const switched = c.session !== chat.session;
   if (switched && chat.session) scrollPos.set(chat.session, stick ? -1 : messages.scrollTop);
+  if (switched) editing = null;
   chat = c;
   sent = false;
   if (switched) {
@@ -1061,7 +1141,7 @@ const input = byId('input') as HTMLTextAreaElement;
 const sendBtn = byId('send') as HTMLButtonElement;
 const composer = byId('composer');
 let chips: Chip[] = [];
-let opts: AppSettings = { zoom: 1, model: '', effort: '', mode: '', toolsOpen: false, showAccount: true, modeNow: null, effortNow: null };
+let opts: AppSettings = { zoom: 1, model: '', effort: '', mode: '', toolsOpen: false, showAccount: true, seenDefault: '', modeNow: null, effortNow: null };
 const SEND_ICON = ['M8 13V3', 'M3.5 7.5 8 3l4.5 4.5'];
 const STOP_ICON = ['M4.5 4.5h7v7h-7z'];
 const X_ICON = ['m4.5 4.5 7 7M11.5 4.5l-7 7'];
@@ -1103,13 +1183,25 @@ input.addEventListener('keydown', (e) => {
     if (!busy()) api.nextMode();
   } else if (e.key === 'Escape') {
     if (!byId('popover').hidden) closePopover();
-    else if (busy()) api.stop();
+    else if (busy()) stopClaude();
   } else if (sendsOnKey(e.key, e.shiftKey, e.isComposing, input.value || (chips.length ? 'x' : ''))) {
     e.preventDefault();
     sendInput();
   }
 });
-sendBtn.addEventListener('click', () => (busy() && !input.value.trim() && !chips.length ? api.stop() : sendInput()));
+sendBtn.addEventListener('click', () => (busy() && !input.value.trim() && !chips.length ? stopClaude() : sendInput()));
+/** Stop: Esc in the terminal. Claude Code does not always write that the turn ended, so the page then
+ *  shows the main process the bottom of the screen, a few times, until the chat is no longer busy. */
+function stopClaude(): void {
+  api.stop();
+  let tries = 0;
+  const look = () => {
+    if (!busy()) return;
+    api.stopScreen(screenLines().slice(-term.rows));
+    if (++tries < 5) setTimeout(look, 800);
+  };
+  setTimeout(look, 900);
+}
 
 // ---- attachments: chips above the text box. The app only learns each file's path and size. ----
 function renderChips(): void {
@@ -1212,11 +1304,15 @@ function openPicker(kind: string): void {
     if (opts.modeNow === 'other') add(popover, 'div', 'popnote').textContent = 'Claude Code is in a mode this app does not offer. Change it in the terminal (Cmd+J).';
   } else if (kind === 'effort') {
     add(popover, 'div', 'poptitle').textContent = 'Thinking (Claude Code effort)';
-    for (const [id, label] of EFFORT_NAMES) popItem(label, id === '' ? "Claude Code's own setting" : '', opts.effort === id, pick({ effort: id }));
+    // Default: what Claude Code's corner shows while no level is picked here.
+    const ownEffort = !opts.effort && opts.effortNow ? EFFORT_NAMES.find(([id]) => id === opts.effortNow)?.[1] : '';
+    for (const [id, label] of EFFORT_NAMES) popItem(id === '' && ownEffort ? `Default (${ownEffort})` : label, id === '' ? "Claude Code's own setting" : '', opts.effort === id, pick({ effort: id }));
     add(popover, 'div', 'popnote').textContent = 'Higher levels think longer and use more of your limit. Changing it restarts Claude Code on this chat.';
   } else if (kind === 'model') {
     add(popover, 'div', 'poptitle').textContent = 'Model';
-    for (const [id, label] of MODEL_NAMES) popItem(label, id === '' ? "Claude Code's own setting" : '', opts.model === id, pick({ model: id }));
+    const own = opts.seenDefault;
+    for (const [id, label] of MODEL_NAMES)
+      popItem(id === '' && own ? `Default (${own})` : label, id === '' ? (own ? "Claude Code's own setting, as it named it the last time it started without a model" : "Claude Code's own setting. Its name shows here once Claude Code has started with it.") : '', opts.model === id, pick({ model: id }));
     const other = add(popover, 'input', 'popinput') as HTMLInputElement;
     other.placeholder = 'Other: a full model name, then Enter';
     if (opts.model && !MODEL_NAMES.some(([id]) => id === opts.model)) other.value = opts.model;
@@ -1618,7 +1714,39 @@ api.onShortcut((name) => {
 
 // ---- chat list: one line per chat. A chat is a root session with all its branches. ----
 let chats: ChatRow[] = [];
+let renaming = ''; // root id of the chat whose name is being edited (the list waits to redraw)
+/** Edit a chat's name in place of `el`. Enter or leaving the box saves, Esc cancels, empty goes back to its own title. */
+function renameChat(el: HTMLElement, c: ChatRow, inPlace = false): void {
+  renaming = c.id;
+  const box = document.createElement('div');
+  box.className = 'chatrow editing';
+  const field = add(box, 'input', 'renamebox') as HTMLInputElement;
+  field.value = c.name;
+  field.maxLength = 60;
+  field.setAttribute('aria-label', 'Chat name');
+  field.title = 'Enter saves, Esc cancels. Empty: back to its own title.';
+  if (inPlace) el.replaceChildren(field);
+  else el.replaceWith(box);
+  field.focus();
+  field.select();
+  let done = false;
+  const finish = (save: boolean) => {
+    if (done) return;
+    done = true;
+    renaming = '';
+    const name = field.value.trim();
+    if (save && name !== c.name) api.renameChat(c.id, name);
+    renderChats();
+  };
+  field.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+    e.stopPropagation();
+  });
+  field.addEventListener('blur', () => finish(true));
+}
 function renderChats(): void {
+  if (renaming) return;
   const box = byId('chats');
   box.replaceChildren();
   let group = '';
@@ -1639,6 +1767,15 @@ function renderChats(): void {
     }
     // Opening a chat only shows it; Claude starts there when you send a message.
     row.title = `${c.full}\n${c.updated ? new Date(c.updated).toLocaleString() : ''}` + (c.running ? '\nClaude is working here' : '');
+    const pen = add(row, 'span', 'chatpen');
+    pen.setAttribute('role', 'button');
+    pen.setAttribute('aria-label', 'Rename');
+    pen.title = 'Rename (or double-click the title at the top)';
+    icon(pen, PEN_ICON, 12, 1.5);
+    pen.addEventListener('click', (e) => {
+      e.stopPropagation();
+      renameChat(row, c);
+    });
     row.addEventListener('click', () => {
       if (c.current) return;
       document.body.classList.remove('sideopen');
@@ -1655,12 +1792,58 @@ api.onChats((c) => {
   chats = c;
   renderChats();
 });
+const PEN_ICON = ['M10.5 3 13 5.5 6 12.5H3.5V10z', 'm9 4.5 2.5 2.5'];
+// Double-click the title at the top: rename the chat on screen.
+byId('chattitle').addEventListener('dblclick', () => {
+  const c = chats.find((x) => x.current);
+  if (c && !renaming) renameChat(byId('chattitle'), c, true);
+});
 byId('newchat').addEventListener('click', () => {
   if (busy()) return showNote('Cannot start a new chat while Claude is working.', 6000);
   document.body.classList.remove('sideopen');
   api.newChat();
 });
 const narrow = window.matchMedia('(max-width: 1000px)');
+// ---- chat list width: drag its right edge (160 to 480 px), arrow keys on the edge, double-click for 240.
+// Saved in design.json (layout.sidebarWidth) when the drag ends. ----
+const grip = byId('sidegrip');
+const sideW = () => parseFloat(getComputedStyle(byId('sidebar')).width); // without the border
+function setSideWidth(w: number, save: boolean): void {
+  const v = Math.round(Math.min(480, Math.max(160, w)));
+  document.body.style.setProperty('--sidebar-width', `${v}px`); // where apply() puts it too
+  placeArtifact();
+  if (save) {
+    refit();
+    api.designSet({ sidebarWidth: v });
+  }
+}
+grip.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const x0 = e.clientX;
+  const w0 = sideW();
+  grip.setPointerCapture(e.pointerId);
+  grip.classList.add('drag');
+  document.body.classList.add('sizing');
+  const move = (m: PointerEvent) => setSideWidth(w0 + m.clientX - x0, false);
+  const up = (u: PointerEvent) => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+    grip.removeEventListener('pointercancel', up);
+    grip.classList.remove('drag');
+    document.body.classList.remove('sizing');
+    setSideWidth(w0 + u.clientX - x0, true);
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+  grip.addEventListener('pointercancel', up);
+});
+grip.addEventListener('dblclick', () => setSideWidth(240, true));
+grip.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  setSideWidth(sideW() + (e.key === 'ArrowLeft' ? -16 : 16), true);
+});
 byId('sidetoggle').addEventListener('click', () => {
   document.body.classList.toggle(narrow.matches ? 'sideopen' : 'sideclosed');
   placeArtifact();
