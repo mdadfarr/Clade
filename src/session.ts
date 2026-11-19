@@ -160,6 +160,7 @@ export function parseSession(text: string, stopUuid?: string): Chat {
  */
 export function cutSession(text: string, cutUuid: string, newId: string): string {
   const byUuid = new Map<string, any>();
+  const order = new Map<string, number>(); // place in the file
   for (const line of text.split('\n')) {
     let d: any;
     try {
@@ -167,7 +168,10 @@ export function cutSession(text: string, cutUuid: string, newId: string): string
     } catch {
       continue;
     }
-    if (d && typeof d.uuid === 'string' && !d.isSidechain) byUuid.set(d.uuid, d);
+    if (d && typeof d.uuid === 'string' && !d.isSidechain) {
+      byUuid.set(d.uuid, d);
+      order.set(d.uuid, order.size);
+    }
   }
   const chain: any[] = [];
   const seen = new Set<string>();
@@ -181,14 +185,28 @@ export function cutSession(text: string, cutUuid: string, newId: string): string
   chain.reverse();
   const used = new Set<string>();
   const answered = new Set<string>();
-  for (const d of chain) {
+  const scan = (d: any) => {
     const c = d.message?.content;
-    if (!Array.isArray(c)) continue;
+    if (!Array.isArray(c)) return;
     for (const b of c) {
       if (d.type === 'assistant' && b?.type === 'tool_use') used.add(b.id);
       if (d.type === 'user' && b?.type === 'tool_result') answered.add(b.tool_use_id);
     }
+  };
+  chain.forEach(scan);
+  // Several tool calls in one message: Claude Code chains call A -> call B -> answer B -> ..., and
+  // answer A hangs off call A, beside the chain. Keep such side answers (written before the cut point)
+  // for calls on the chain, so the branch has every call's answer, in file order.
+  const end = order.get(cutUuid) ?? Infinity;
+  for (const [u, d] of byUuid) {
+    if (seen.has(u) || (order.get(u) ?? Infinity) > end || d.type !== 'user' || !seen.has(d.parentUuid)) continue;
+    const c = d.message?.content;
+    if (!Array.isArray(c) || !c.some((b: any) => b?.type === 'tool_result' && used.has(b.tool_use_id) && !answered.has(b.tool_use_id))) continue;
+    seen.add(u);
+    chain.push(d);
+    scan(d);
   }
+  chain.sort((a, b) => order.get(a.uuid)! - order.get(b.uuid)!);
   for (const id of used) if (!answered.has(id)) throw new Error('that point is between a tool call and its result');
   return chain.map((d) => JSON.stringify('sessionId' in d ? { ...d, sessionId: newId } : d)).join('\n') + '\n';
 }

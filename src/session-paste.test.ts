@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
-import { isInjected, parseSession, unwrapPasted } from './session';
+import { cutSession, isInjected, parseSession, unwrapPasted } from './session';
 
 // Shapes as Claude Code 2.1.327 writes them (made-up text).
 const line = (o: object) => JSON.stringify(o);
@@ -38,4 +38,28 @@ test("Claude Code's own lines stay hidden; any other text starting with < is a r
   for (const s of ['<div> is an html tag', '<3 thanks', '<T> generics in C++?']) assert.ok(!isInjected(s), s);
   const chat = parseSession([user('u1', null, '<command-name>/usage</command-name>'), user('u2', 'u1', '<T> generics in C++?'), said('a2', 'u2', 'Templates.')].join('\n'));
   assert.deepStrictEqual(chat.items.filter((i) => i.role === 'user').map((i) => i.text), ['<T> generics in C++?']);
+});
+
+test('branch after two tool calls in one message: the side answer is kept, the cut no longer refuses', () => {
+  // Shape Claude Code writes: call A -> call B -> answer B -> reply; answer A hangs off call A.
+  const L = (o: object) => JSON.stringify({ sessionId: 'old', ...o });
+  const tu = (id: string) => ({ type: 'tool_use', id, name: 'AskUserQuestion', input: {} });
+  const tr = (id: string) => ({ type: 'tool_result', tool_use_id: id, content: 'answered' });
+  const file = [
+    L({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'plan my day' } }),
+    L({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { role: 'assistant', stop_reason: 'tool_use', content: [tu('A')] } }),
+    L({ type: 'assistant', uuid: 'a2', parentUuid: 'a1', message: { role: 'assistant', stop_reason: 'tool_use', content: [tu('B')] } }),
+    L({ type: 'user', uuid: 'rA', parentUuid: 'a1', message: { role: 'user', content: [tr('A')] } }),
+    L({ type: 'user', uuid: 'rB', parentUuid: 'a2', message: { role: 'user', content: [tr('B')] } }),
+    L({ type: 'assistant', uuid: 'a3', parentUuid: 'rB', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Plan' }] } }),
+    L({ type: 'system', uuid: 's1', parentUuid: 'a3', subtype: 'turn_duration' }),
+  ].join('\n');
+  const chat = parseSession(file);
+  assert.strictEqual(chat.replies[0].forkUuid, 's1');
+  const cut = cutSession(file, 's1', 'new');
+  const uuids = cut.trim().split('\n').map((l) => JSON.parse(l).uuid);
+  assert.deepStrictEqual(uuids, ['u1', 'a1', 'a2', 'rA', 'rB', 'a3', 's1']); // file order, answer A included
+  assert.ok(cut.trim().split('\n').every((l) => JSON.parse(l).sessionId === 'new'));
+  // a cut before the answers still refuses
+  assert.throws(() => cutSession(file, 'a2', 'new'), /between a tool call and its result/);
 });
