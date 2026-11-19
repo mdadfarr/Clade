@@ -12,6 +12,8 @@ export interface SessionInfo {
 export interface ChatRow {
   id: string; // the chat's root session (also when that file is gone)
   title: string;
+  named: boolean; // the title is a name the user gave it in the app
+  name: string; // the title before it is cut to fit (what a rename starts from)
   full: string; // the first message, for the tooltip
   updated: number; // newest change in any of its sessions
   group: string; // Today, Yesterday, Previous 7 days, Earlier
@@ -50,7 +52,8 @@ export function rootOf(id: string, branches: Branch[]): string {
   return at;
 }
 
-export function buildChats(sessions: SessionInfo[], branches: Branch[], current: string, now: number): ChatRow[] {
+/** names: the app's own names by root id (chat-names.json). Else a name from Claude Code's /rename, else the first words. */
+export function buildChats(sessions: SessionInfo[], branches: Branch[], current: string, now: number, names: Record<string, string> = {}): ChatRow[] {
   const families = new Map<string, SessionInfo[]>();
   for (const s of sessions) {
     const root = rootOf(s.id, branches);
@@ -65,9 +68,12 @@ export function buildChats(sessions: SessionInfo[], branches: Branch[], current:
     if (!first && !isCurrent) continue; // nothing was ever said in it
     const newest = members.reduce((a, b) => (b.mtime > a.mtime ? b : a));
     const updated = newest.mtime || now;
+    const own = newestTitle(members);
     rows.push({
       id: root,
-      title: first ? chatTitle(firstWordsOf(first, 12) || first) : 'New chat',
+      title: chatTitle(names[root] || own || (first ? firstWordsOf(first, 12) || first : 'New chat')),
+      named: !!names[root],
+      name: (names[root] || own || (first ? firstWordsOf(first, 12) || first : '')).replace(/\s+/g, ' ').trim(),
       full: first || 'New chat, no messages yet',
       updated,
       group: dateGroup(updated, now),
@@ -78,4 +84,9 @@ export function buildChats(sessions: SessionInfo[], branches: Branch[], current:
     });
   }
   return rows.sort((a, b) => b.updated - a.updated);
+}
+
+/** The /rename name of the newest session in a chat that has one ('' if none). */
+function newestTitle(members: SessionInfo[]): string {
+  return [...members].sort((a, b) => b.mtime - a.mtime).find((s) => s.chat?.title)?.chat?.title ?? '';
 }

@@ -61,3 +61,16 @@ test('chats: rootOf survives a loop in branches.json; long titles are cut', () =
   assert.strictEqual(chatTitle('x'.repeat(60)).length, 40);
   assert.strictEqual(chatTitle('  short\n one '), 'short one');
 });
+
+test("chats: a name given in the app wins, then Claude Code's /rename, then the first words; long names are cut", () => {
+  const renamed = parseSession([line({ type: 'user', uuid: 'u1', message: { content: 'fix the bug' } }), line({ type: 'custom-title', customTitle: 'Bug hunt', sessionId: 'B' })].join('\n'));
+  const sessions = [
+    { id: 'A', chat: session('plan the trip'), mtime: NOW - 2 * H },
+    { id: 'B', chat: renamed, mtime: NOW - 1 * H },
+    { id: 'C', chat: session('third one'), mtime: NOW - 3 * H },
+  ];
+  const long = 'A very long name that will not fit in the chat list at all';
+  const rows = buildChats(sessions, [], 'A', NOW, { A: 'Trip', C: long });
+  assert.deepStrictEqual(rows.map((r) => [r.id, r.title, r.named]), [['B', 'Bug hunt', false], ['A', 'Trip', true], ['C', chatTitle(long), true]]);
+  assert.strictEqual(rows[2].name, long); // a rename starts from the whole name
+});
