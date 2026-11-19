@@ -512,11 +512,17 @@ function runClaude(id: string, args: string[]): void {
     if (!/Esc to cancel|Enter to confirm/.test(tail)) return;
     tail = '';
     clearTimeout(ask);
-    ask = setTimeout(() => {
-      if (term !== p || cards.some((c) => c.card.session === id) || Date.now() - lastCardEvent < 5000) return;
+    const check = () => {
+      if (term !== p || cards.some((c) => c.card.session === id)) return; // gone, or a card covers it
       if (usageReading || Date.now() - usageAt < 3000) return; // the /usage screen the app opened for the bars
-      showTerminal('Claude is asking something in the terminal.');
-    }, 2500);
+      // Right after a card was answered, wait out the moment its own dialog closes, then look again
+      // instead of giving up: a second question that follows at once would otherwise show nowhere.
+      const wait = lastCardEvent + 5000 - Date.now();
+      if (wait > 0) return void (ask = setTimeout(check, wait + 200));
+      // The page holds the screen: it shows the terminal only if a question is still on it and no card is open.
+      win?.webContents.send('check-question', id);
+    };
+    ask = setTimeout(check, 2500);
   });
   p.onExit(() => {
     clearTimeout(ask);

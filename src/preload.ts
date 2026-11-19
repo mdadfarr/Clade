@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   onData: (cb: (data: string) => void) => ipcRenderer.on('pty-data', (_e, d) => cb(d)),
   onCards: (cb: (cards: unknown) => void) => ipcRenderer.on('cards', (_e, c) => cb(c)),
   onShowTerm: (cb: (why: string) => void) => ipcRenderer.on('show-term', (_e, w) => cb(w)),
+  onCheckQuestion: (cb: (session: string) => void) => ipcRenderer.on('check-question', (_e, s) => cb(s)),
   wheelLog: process.argv.includes('--wheel-log'),
   logWheel: (line: string) => ipcRenderer.send('wheel-log', line),
   answerCard: (id: string, answer: unknown) => ipcRenderer.send('card-answer', id, answer),

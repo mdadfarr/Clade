@@ -59,6 +59,7 @@ declare const api: {
   wheelLog: boolean;
   logWheel(line: string): void;
   onShowTerm(cb: (why: string) => void): void;
+  onCheckQuestion(cb: (session: string) => void): void;
   answerCard(id: string, answer: object): void;
 };
 interface Card {
@@ -177,6 +178,17 @@ function showTerm(on: boolean): void {
   else byId('input').focus();
 }
 api.onToggleTerm(() => showTerm(!document.body.classList.contains('showterm')));
+// Claude Code shows a question in the terminal and no card came for it: if it is still on the screen
+// (bottom rows) and no card is open, show the terminal so the question is not missed.
+api.onCheckQuestion(() => {
+  if (cards.length) return;
+  const b = term.buffer.active;
+  const rows: string[] = [];
+  for (let i = Math.max(0, b.length - term.rows); i < b.length; i++) rows.push(b.getLine(i)?.translateToString(true) ?? '');
+  if (!/Esc to cancel|Enter to confirm|Enter to select/.test(rows.join('\n'))) return;
+  showTerm(true);
+  showNote('Claude is asking something in the terminal. Answer it there.', 10000);
+});
 api.onShowTerm((why) => {
   showTerm(true);
   showNote(why, 10000);
@@ -1734,3 +1746,51 @@ api.onDesign((d, error, info, theme, l) => {
 fit.fit();
 api.start(term.cols, term.rows);
 input.focus();
+
+// ---- reply with a selection: select text in the chat, a small Reply button shows beside it; a click
+// puts the text into the message box as a quote (each line starting with "> "), with the cursor after it.
+// Nothing is sent: the user writes the question and presses Enter. ----
+const replyBtn = document.createElement('button');
+replyBtn.id = 'replysel';
+replyBtn.hidden = true;
+replyBtn.title = 'Quote this in your next message';
+icon(replyBtn, ['M6.5 4 3 7.5 6.5 11', 'M3.5 7.5H9a4 4 0 0 1 4 4V13'], 13, 1.6);
+add(replyBtn, 'span').textContent = 'Reply';
+document.body.appendChild(replyBtn);
+let replyText = '';
+function placeReply(): void {
+  const sel = getSelection();
+  const text = sel && !sel.isCollapsed ? sel.toString().trim() : '';
+  const range = text && sel!.rangeCount ? sel!.getRangeAt(0) : null;
+  const inChat = !!range && byId('items').contains(range.commonAncestorContainer);
+  if (!range || !inChat) {
+    replyBtn.hidden = true;
+    replyText = '';
+    return;
+  }
+  const rects = range.getClientRects();
+  const last = rects[rects.length - 1] ?? range.getBoundingClientRect();
+  const box = messages.getBoundingClientRect();
+  if (last.bottom < box.top || last.top > box.bottom) {
+    replyBtn.hidden = true; // the end of the selection is scrolled out of view
+    return;
+  }
+  replyText = text;
+  replyBtn.hidden = false;
+  const w = replyBtn.offsetWidth || 80;
+  replyBtn.style.left = `${Math.max(box.left + 4, Math.min(last.right - w / 2, box.right - w - 4))}px`;
+  replyBtn.style.top = `${Math.min(last.bottom + 6, box.bottom - 34)}px`;
+}
+document.addEventListener('selectionchange', () => requestAnimationFrame(placeReply));
+messages.addEventListener('scroll', () => !replyBtn.hidden && placeReply());
+replyBtn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection while clicking
+replyBtn.addEventListener('click', () => {
+  if (!replyText) return;
+  const q = quoteText(replyText);
+  input.value = input.value.trim() ? `${q}${input.value}` : q;
+  getSelection()?.removeAllRanges();
+  replyBtn.hidden = true;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  growInput();
+});

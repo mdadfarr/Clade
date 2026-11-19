@@ -175,3 +175,9 @@ test('map fold: parents, counts below, and what shows when folded', () => {
   assert.strictEqual(show([1, 3]), 'Root A B B1 Other'); // a fold inside a fold
   assert.strictEqual(show([0]), 'Root Other');
 });
+
+test('reply with a selection: each line quoted, blank lines kept as ">", an empty line after, long text cut', () => {
+  assert.strictEqual(M.quoteText('  Friction points up the slope.  '), '> Friction points up the slope.\n\n');
+  assert.strictEqual(M.quoteText('line one\n\n\n\nline two\r\n'), '> line one\n>\n> line two\n\n');
+  assert.strictEqual(M.quoteText('x'.repeat(5000)).length, 2 + 2000 + 2);
+});

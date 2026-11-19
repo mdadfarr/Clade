@@ -428,6 +428,13 @@ function sendsOnKey(key: string, shift: boolean, composing: boolean, text: strin
   return key === 'Enter' && !shift && !composing && text.trim() !== '';
 }
 
+// ---- reply with a selection ----
+const QUOTE_MAX = 2000;
+/** Selected text as a quote for the message box: each line starts with "> ", then an empty line. */
+function quoteText(text: string): string {
+  const t = text.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, QUOTE_MAX);
+  return t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n') + '\n\n';
+}
 
 if (typeof module !== 'undefined')
-  module.exports = { mapTree, mapVisible, mapIndentStep, parseMem, memTarget, memCells, parseTimeline, parseCompare, parseFlow, TONE_NAMES, SIZE_NAMES, FX_NAMES, tagKind, parseFxHeading, stripTags, parseMap, normHeading, findHeading, tableCells, parseTable, calloutOf, CALLOUTS, toolNames, sendsOnKey };
+  module.exports = { mapTree, mapVisible, mapIndentStep, parseMem, memTarget, memCells, parseTimeline, parseCompare, parseFlow, TONE_NAMES, SIZE_NAMES, FX_NAMES, tagKind, parseFxHeading, stripTags, parseMap, normHeading, findHeading, tableCells, parseTable, calloutOf, CALLOUTS, toolNames, sendsOnKey, quoteText };

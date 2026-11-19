@@ -250,6 +250,11 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .dots { display: flex; gap: 4px; }
 .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--t-accent); animation: dot 1.2s infinite ease-in-out; }
 .dots i:nth-child(2) { animation-delay: 0.15s; } .dots i:nth-child(3) { animation-delay: 0.3s; }
+/* Reply with a selection: a small button under the end of the selected text */
+#replysel { position: fixed; z-index: 30; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); font: 12.5px var(--font-ui); cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
+#replysel:hover { background: var(--raised); }
+#replysel[hidden] { display: none; }
 /* the chat whose claude is working, in the list: three small dots */
 .chatdots { display: inline-flex; gap: 3px; margin-left: 6px; flex-shrink: 0; }
 .chatdots i { width: 4px; height: 4px; border-radius: 50%; background: var(--t-accent); animation: dot 1.2s infinite ease-in-out; }
