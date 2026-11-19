@@ -16,8 +16,9 @@ export interface Settings {
   mode: Mode | ''; // '' = Claude Code's own default
   toolsOpen: boolean; // tool steps shown unfolded
   showAccount: boolean; // the account row shows the email (off: "Signed in with Claude Code")
+  seenDefault: string; // Claude Code's own default model, as its banner named it when started without --model ('' = not seen yet)
 }
-export const DEFAULT_SETTINGS: Settings = { zoom: 1, model: '', effort: '', mode: '', toolsOpen: false, showAccount: true };
+export const DEFAULT_SETTINGS: Settings = { zoom: 1, model: '', effort: '', mode: '', toolsOpen: false, showAccount: true, seenDefault: '' };
 
 export const ZOOM_MIN = 0.5;
 export const ZOOM_MAX = 2;
@@ -50,6 +51,7 @@ export function applySettings(base: Settings, patch: unknown): Settings {
   if (p.mode === '' || MODES.includes(p.mode as Mode)) out.mode = p.mode as Mode | '';
   if (typeof p.toolsOpen === 'boolean') out.toolsOpen = p.toolsOpen;
   if (typeof p.showAccount === 'boolean') out.showAccount = p.showAccount;
+  if (p.seenDefault === '' || (typeof p.seenDefault === 'string' && MODEL_SHOWN.test(p.seenDefault))) out.seenDefault = p.seenDefault;
   return out;
 }
 
@@ -86,6 +88,34 @@ export function modeInText(text: string): Mode | 'other' | null {
 export function effortInText(text: string): Effort | null {
   const all = [...text.matchAll(/(low|medium|high|xhigh|max) · \/effort/g)];
   return all.length ? (all[all.length - 1][1] as Effort) : null;
+}
+
+/**
+ * Claude Code's screen after a Stop (the bottom rows, as text). busy: its status line still offers
+ * "esc to interrupt". boxLines: rows its own input box takes up (0 when empty): stopped before the
+ * first word of a reply, Claude Code puts the message back in that box.
+ */
+export function stopScreen(lines: string[]): { busy: boolean; boxLines: number } {
+  const rule = (l: string) => /^\s*─{10,}\s*$/.test(l);
+  let end = lines.length - 1;
+  while (end >= 0 && !rule(lines[end])) end--; // the rule under the box
+  let start = end - 1;
+  while (start >= 0 && !rule(lines[start])) start--; // the rule above it
+  const box = start >= 0 ? lines.slice(start + 1, end) : [];
+  const typed = box.length > 0 && /^❯/.test(box[0]) && box.some((l) => l.replace(/^❯/, '').trim() !== '');
+  const status = end >= 0 ? lines.slice(end + 1).join('\n') : lines.slice(-3).join('\n');
+  return { busy: /esc to interrupt/i.test(status), boxLines: typed ? box.length : 0 };
+}
+
+/** Keys that empty Claude Code's input box of n rows: Ctrl+U clears a row, Backspace joins it to the one above. */
+export const clearBoxKeys = (n: number) => (n > 0 ? '\x15' + '\x7f\x15'.repeat(n - 1) : '');
+
+// A model as Claude Code's banner names it: "Sonnet 5.5", "Opus 5.5 (1M context)".
+const MODEL_SHOWN = /^(Fable|Opus|Sonnet|Haiku) \d{1,2}(\.\d{1,2})?( \([A-Za-z0-9 ]{1,20}\))?$/;
+/** The model named in Claude Code's start banner ("Sonnet 5.5 · Claude Pro", "Haiku 5.5 with low effort · Claude Pro"), if the text holds it. */
+export function modelInBanner(text: string): string | null {
+  const m = /\b((?:Fable|Opus|Sonnet|Haiku) \d{1,2}(?:\.\d{1,2})?(?: \([A-Za-z0-9 ]{1,20}\))?)(?: with [a-z]+ effort)? · /.exec(text);
+  return m ? m[1] : null;
 }
 
 /** Shift+Tab cycles the modes in a fixed order. At most this many presses are ever needed (and tried). */

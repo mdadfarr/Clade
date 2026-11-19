@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
-import { applySettings, clampZoom, DEFAULT_SETTINGS, effortInText, modeInText, MODES, parseSettings, startFlags, validModel, zoomStep } from './settings';
+import { applySettings, clampZoom, clearBoxKeys, DEFAULT_SETTINGS, effortInText, modeInText, modelInBanner, MODES, parseSettings, startFlags, stopScreen, validModel, zoomStep } from './settings';
 
 test('settings: broken, missing or wrong values fall back to defaults', () => {
   assert.deepStrictEqual(parseSettings(null), DEFAULT_SETTINGS);
   assert.deepStrictEqual(parseSettings('{ nope'), DEFAULT_SETTINGS);
   assert.deepStrictEqual(parseSettings('[1]'), DEFAULT_SETTINGS);
   assert.deepStrictEqual(parseSettings(JSON.stringify({ zoom: 'big', model: '--dangerously-skip-permissions', effort: 'off', mode: 'bypassPermissions', toolsOpen: 1, showAccount: 'no', extra: true })), DEFAULT_SETTINGS);
-  assert.deepStrictEqual(parseSettings(JSON.stringify({ zoom: 1.3, model: 'sonnet', effort: 'high', mode: 'plan', toolsOpen: true, showAccount: false })), { zoom: 1.3, model: 'sonnet', effort: 'high', mode: 'plan', toolsOpen: true, showAccount: false });
+  assert.deepStrictEqual(parseSettings(JSON.stringify({ zoom: 1.3, model: 'sonnet', effort: 'high', mode: 'plan', toolsOpen: true, showAccount: false })), { zoom: 1.3, model: 'sonnet', effort: 'high', mode: 'plan', toolsOpen: true, showAccount: false, seenDefault: '' });
   assert.deepStrictEqual(applySettings({ ...DEFAULT_SETTINGS, model: 'opus' }, { effort: 'max', mode: 'dontAsk' }), { ...DEFAULT_SETTINGS, model: 'opus', effort: 'max' });
 });
 
@@ -47,4 +47,25 @@ test('settings: the mode and effort are read back from the terminal text', () =>
   assert.strictEqual(modeInText('nothing here'), null);
   assert.strictEqual(effortInText('   ◐ medium · /effort   ...   ● high · /effort'), 'high');
   assert.strictEqual(effortInText('no corner'), null);
+});
+
+test('screen after a Stop: busy while "esc to interrupt" shows; rows of a message put back in the box', () => {
+  const rule = '─'.repeat(40);
+  const S = (box: string[], status: string) => ['✻ Cogitated for 4s', rule, ...box, rule, status];
+  assert.deepStrictEqual(stopScreen(S(['❯ '], '  ⏸ manual mode on · esc to interrupt')), { busy: true, boxLines: 0 });
+  assert.deepStrictEqual(stopScreen(S(['❯ '], '  ⏸ manual mode on · ? for shortcuts')), { busy: false, boxLines: 0 });
+  assert.deepStrictEqual(stopScreen(S(['❯ Think hard.', '  Then list primes.', '  Then stop.'], '  ⏸ manual mode on')), { busy: false, boxLines: 3 });
+  assert.deepStrictEqual(stopScreen(['no box here']), { busy: false, boxLines: 0 });
+  assert.strictEqual(clearBoxKeys(0), '');
+  assert.strictEqual(clearBoxKeys(1), '\x15');
+  assert.strictEqual(clearBoxKeys(3), '\x15\x7f\x15\x7f\x15');
+});
+
+test("default model: named in Claude Code's banner; only a model name is stored", () => {
+  assert.strictEqual(modelInBanner('Claude Code v2.1.328\n Sonnet 5.5 · Claude Pro\n'), 'Sonnet 5.5');
+  assert.strictEqual(modelInBanner('Opus 5.5 (1M context) · Claude Max'), 'Opus 5.5 (1M context)');
+  assert.strictEqual(modelInBanner('▝▜██████▀  Haiku 5.5 with low effort · Claude Pro'), 'Haiku 5.5');
+  assert.strictEqual(modelInBanner('no banner yet'), null);
+  assert.strictEqual(applySettings(DEFAULT_SETTINGS, { seenDefault: 'Haiku 5.5' }).seenDefault, 'Haiku 5.5');
+  for (const bad of ['opus', '--model x', 'Sonnet', 'Sonnet 5.5; rm', 7]) assert.strictEqual(applySettings(DEFAULT_SETTINGS, { seenDefault: bad }).seenDefault, '');
 });
