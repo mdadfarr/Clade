@@ -201,7 +201,7 @@ interface PaneView {
   addFiles(more: Chip[]): void;
   screenLines(): string[];
   showReply(reply: string): void;
-  quote(text: string): void;
+  quote(shown: HTMLElement, text: string): void;
   theme(d: any, theme: 'light' | 'dark'): void;
   termSize(): { cols: number; rows: number };
   /** Before the pane's element is moved: returns what puts its scroll position back afterwards. */
@@ -443,6 +443,7 @@ function createPane(id: string): PaneView {
         actions(parent, item.reply);
       }
     });
+    if (pending) userMessage(pending.text, undefined);
     workingEl.hidden = !isBusy();
     workingEl.lastElementChild!.textContent = 'Claude is working. If nothing happens, press Cmd+J to see the terminal.';
     renderControls();
@@ -462,6 +463,14 @@ function createPane(id: string): PaneView {
   let livePreview = '';
   let previewTimer = 0;
   let lastSent = ''; // the message just typed, until the session file has it
+  // The message just sent, drawn as a bubble at once; Claude Code writes it to the session file only when
+  // it starts on it. Dropped when the file has it, or when it comes back to the box (not sent / stopped).
+  let pending: { text: string; session: string; users: number } | null = null;
+  const userCount = (c: ChatView) => c.items.filter((i) => i.role === 'user').length;
+  function pendingInFile(c: ChatView): boolean {
+    if (!pending) return true;
+    return c.session === pending.session ? userCount(c) > pending.users : userCount(c) > 0;
+  }
   function readPreview(): void {
     previewTimer = 0;
     let next = '';
@@ -544,7 +553,15 @@ function createPane(id: string): PaneView {
       });
       return;
     }
-    add(wrap, 'div', 'user').textContent = text;
+    const bubble = add(wrap, 'div', 'user');
+    // Leading "> " lines (a quote from Reply): drawn as a quote, the way the reply looked; the rest as text.
+    const lines = text.split('\n');
+    let n = 0;
+    while (n < lines.length && /^>( |$)/.test(lines[n])) n++;
+    if (n) {
+      renderMarkdown(add(bubble, 'div', 'userquote claude'), lines.slice(0, n).map((l) => l.replace(/^> ?/, '')).join('\n'), look);
+      bubble.appendChild(document.createTextNode(lines.slice(n).join('\n').replace(/^\n+/, '')));
+    } else bubble.textContent = text;
     if (!r) return;
     const row = add(wrap, 'div', 'actions useracts');
     const off = isBusy() ? 'Disabled while Claude is working' : r.retry ? '' : 'Editing is not possible here';
@@ -766,8 +783,28 @@ function createPane(id: string): PaneView {
   // makes a new line. Only the user's own key or click sends, stops or changes anything. ----
   let chips: Chip[] = [];
   /** The round button: Send while there is something to send, Stop while Claude works and the box is empty. */
+  // Quotes (Reply on a selection): shown above the text box as they look in the chat; sent as "> " lines.
+  let quotes: { shown: HTMLElement; text: string }[] = [];
+  function renderQuotes(): void {
+    const box = q('.quotebox');
+    box.replaceChildren();
+    box.hidden = !quotes.length;
+    for (const qt of quotes) {
+      const row = add(box, 'div', 'quote');
+      add(row, 'div', 'quotebody claude').appendChild(qt.shown.cloneNode(true));
+      const x = add(row, 'button', 'quotex');
+      x.setAttribute('aria-label', 'Remove this quote');
+      x.title = 'Remove this quote';
+      icon(x, X_ICON, 12, 1.6);
+      x.addEventListener('click', () => {
+        quotes = quotes.filter((k) => k !== qt);
+        renderQuotes();
+      });
+    }
+    updateSend();
+  }
   function updateSend(): void {
-    const has = !!input.value.trim() || chips.length > 0;
+    const has = !!input.value.trim() || chips.length > 0 || quotes.length > 0;
     const stop = isBusy() && !has;
     sendBtn.replaceChildren();
     icon(sendBtn, stop ? STOP_ICON : SEND_ICON, 16, 1.8);
@@ -781,10 +818,14 @@ function createPane(id: string): PaneView {
     updateSend();
   }
   function sendInput(): void {
-    if (!input.value.trim() && !chips.length) return;
+    if (!input.value.trim() && !chips.length && !quotes.length) return;
     if (isBusy()) return note('Claude is still working in this pane. Send this when it has finished, or press Stop.', 6000);
-    lastSent = buildMessage(input.value, chips); // attachments go as paths only; Claude Code reads the files
+    // attachments go as paths only; Claude Code reads the files. Quotes go first, as "> " lines.
+    lastSent = (quotes.map((k) => quoteText(k.text)).join('') + buildMessage(input.value, chips)).trim();
+    quotes = [];
+    renderQuotes();
     api.send(id, lastSent);
+    pending = { text: lastSent, session: chat.session, users: userCount(chat) };
     input.value = '';
     chips = [];
     renderChips();
@@ -1017,6 +1058,8 @@ function createPane(id: string): PaneView {
       const switched = c.session !== chat.session;
       if (switched && chat.session) scrollPos.set(chat.session, stick ? -1 : messages.scrollTop);
       if (switched) editing = null;
+      // Another chat opened in this pane (not the new one the message started): the bubble is not its.
+      if (pending && (pendingInFile(c) || (switched && pending.session))) pending = null;
       chat = c;
       sent = false;
       if (switched) {
@@ -1051,6 +1094,8 @@ function createPane(id: string): PaneView {
       note('Claude is asking something in the terminal. Answer it there.', 10000);
     },
     prefill(t, why) {
+      pending = null; // the message is back in the box, so it is not shown as sent
+      renderChat();
       if (why === 'stopped') {
         // Stopped before Claude wrote anything: the message comes back here, as Claude Code does in its own box.
         if (!input.value.trim()) input.value = t;
@@ -1089,12 +1134,10 @@ function createPane(id: string): PaneView {
       scrollUntil = Date.now() + 15000;
       scrollToReply();
     },
-    quote(text) {
-      const qt = quoteText(text);
-      input.value = input.value.trim() ? `${qt}${input.value}` : qt;
+    quote(shown, text) {
+      quotes.push({ shown, text });
+      renderQuotes();
       input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-      growInput();
     },
     theme(d, th) {
       const r = d.colors[th];
@@ -2188,9 +2231,42 @@ document.addEventListener('selectionchange', () => requestAnimationFrame(placeRe
 document.addEventListener('scroll', () => !replyBtn.hidden && placeReply(), true);
 replyBtn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection while clicking
 replyBtn.addEventListener('click', () => {
-  if (!replyText || !replyPane) return;
+  const sel = getSelection();
+  if (!replyText || !replyPane || !sel?.rangeCount) return;
   const v = replyPane;
-  getSelection()?.removeAllRanges();
+  const range = sel.getRangeAt(0).cloneRange();
+  // A selection that starts or ends inside a formula takes the whole formula (half a KaTeX tree is noise).
+  const mathOf = (n: Node) => (n instanceof Element ? n : n.parentElement)?.closest('.katex-display, .katex');
+  const m1 = mathOf(range.startContainer);
+  const m2 = mathOf(range.endContainer);
+  if (m1) range.setStartBefore(m1);
+  if (m2) range.setEndAfter(m2);
+  const shown = document.createElement('div');
+  shown.appendChild(range.cloneContents()); // the app's own drawn nodes: colors, math, code as on screen
+  shown.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  shown.querySelectorAll('button, .actions, .preview').forEach((n) => n.remove());
+  sel.removeAllRanges();
   replyBtn.hidden = true;
-  v.quote(replyText);
+  v.quote(shown, quoteSource(shown) || replyText);
 });
+/** The text that is sent for a quote: formulas as their TeX between $ signs (KaTeX keeps the source in
+ *  its MathML annotation), everything else as the text on screen, with its line breaks. */
+function quoteSource(shown: HTMLElement): string {
+  const c = shown.cloneNode(true) as HTMLElement;
+  c.querySelectorAll('.katex-display, .katex').forEach((k) => {
+    if (!c.contains(k)) return; // inside a display formula already replaced
+    const tex = k.querySelector('annotation[encoding="application/x-tex"]')?.textContent?.trim();
+    if (!tex) return;
+    const block = k.classList.contains('katex-display');
+    k.replaceWith(document.createTextNode(block ? `\n$$${tex}$$\n` : `$${tex}$`));
+  });
+  // innerText needs layout: measure off screen, in the chat column's styles.
+  const host = document.createElement('div');
+  host.className = 'claude';
+  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:600px;visibility:hidden';
+  host.appendChild(c);
+  document.body.appendChild(host);
+  const text = c.innerText;
+  host.remove();
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}

@@ -56,13 +56,12 @@ test('dropdowns: every select in the app gets the theme colors, and the page sta
   assert.match(fs.readFileSync(path.join(src, 'renderer.ts'), 'utf8'), /documentElement\.style\.colorScheme = theme/);
 });
 
-test('selected text is a yellow highlighter in light and dark, never the accent', () => {
+test('selected text is a light accent tint in light and dark, and keeps its own text color', () => {
   const light = rule('::selection');
   const dark = rule('body.dark ::selection');
-  assert.match(light, /background:\s*#ffe45c; color:\s*#1d1c1a/);
-  assert.match(dark, /background:\s*#f2d23a/);
-  assert.match(dark, /color:\s*#1d1c1a/);
-  assert.doesNotMatch(light + dark, /accent|--t-/);
+  assert.match(light, /background:\s*color-mix\(in srgb, var\(--accent-fill\) \d+%, transparent\)/);
+  assert.match(dark, /background:\s*color-mix\(in srgb, var\(--accent-fill\) \d+%, transparent\)/);
+  assert.doesNotMatch(light + dark, /(^|[^-])color:/);
 });
 
 test('big title: no canvas or dots left; a soft accent glow on hover, none with Reduce motion', () => {

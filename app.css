@@ -12,11 +12,9 @@ select, option, optgroup { color: var(--text); background-color: var(--surface);
    rules weak, so a control that sets its own outline later in this file keeps it. */
 :where(button, a, summary, select, input, textarea, [tabindex]):focus { outline: none; }
 :where(button, a, summary, select, input[type="checkbox"], input[type="radio"], input[type="range"], [tabindex]):focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
-/* Selected text: a yellow highlighter, the same in every accent (the accent tint turned red with the
-   Red accent and read like an error mark; a gray tint looked like darkening). Dark mode keeps the
-   yellow and writes the selected text dark, so it stays readable. */
-::selection { background: #ffe45c; color: #1d1c1a; }
-body.dark ::selection { background: #f2d23a; color: #1d1c1a; }
+/* Selected text: a light tint of the accent; the text keeps its own color (colored phrases stay colored). */
+::selection { background: color-mix(in srgb, var(--accent-fill) 22%, transparent); }
+body.dark ::selection { background: color-mix(in srgb, var(--accent-fill) 32%, transparent); }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-corner { background: transparent; }
 *::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
@@ -321,6 +319,15 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .composer.dropping { border-style: dashed; border-color: var(--t-accent); }
 .input { display: block; width: 100%; box-sizing: border-box; resize: none; border: 0; outline: 0; background: none; padding: 2px 0; font-size: var(--msg-size); line-height: 1.5; max-height: 12em; }
 .input::placeholder { color: var(--muted-text); }
+.quotebox { display: flex; flex-direction: column; gap: 6px; }
+.quotebox[hidden] { display: none; }
+.quote { position: relative; display: flex; align-items: flex-start; gap: 6px; padding: 8px 6px 8px 12px; border-left: 3px solid var(--accent-fill); border-radius: 4px 10px 10px 4px; background: var(--bg); }
+.quotebody { flex: 1; min-width: 0; max-height: 160px; overflow: auto; font-size: var(--small-size); line-height: 1.5; }
+.quotebody > div > :first-child { margin-top: 0; } .quotebody > div > :last-child { margin-bottom: 0; }
+.quotex { flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted-text); cursor: pointer; }
+.quotex:hover { background: var(--raised); color: var(--text); }
+.userquote { margin: 0 0 8px; padding: 2px 0 2px 10px; border-left: 3px solid var(--accent-fill); font-size: var(--small-size); opacity: 0.85; white-space: normal; }
+.userquote > :first-child { margin-top: 0; } .userquote > :last-child { margin-bottom: 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips:empty { display: none; }
 .chip { display: flex; align-items: center; gap: 6px; max-width: 260px; padding: 4px 4px 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-size: var(--small-size); }
