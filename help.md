@@ -103,7 +103,7 @@ A **callout**:
 
 Hover a message of yours and click the pencil to edit it. Send makes a new branch without that message and what came after, and sends the new text there; the old version stays, and the arrows under the reply step between them.
 
-Hover a chat in the list and click the pencil to rename it, or double-click the title at the top. Leave the name empty to go back to its own title. A name given with Claude Code's own `/rename` shows too.
+Hover a chat in the list and click the pencil to rename it, or use Rename in a pane's title bar menu. Leave the name empty to go back to its own title. A name given with Claude Code's own `/rename` shows too.
 
 Drag the right edge of the chat list to make it wider or narrower. Double-click the edge to go back to the usual width.
 
