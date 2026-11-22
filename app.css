@@ -97,17 +97,17 @@ body.sizing, body.sizing * { cursor: col-resize !important; user-select: none !i
 
 /* ---- top bar ---- */
 #bar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; flex-shrink: 0; }
-#chattitle { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#barfill { flex: 1; }
 #treenote { color: var(--t-bad); font-size: 12px; }
 .barbtn { display: flex; align-items: center; gap: 6px; padding: 5px 9px; border: 0; border-radius: 7px; background: none; color: var(--muted-text); cursor: pointer; }
 .barbtn:hover { background: var(--raised); color: var(--text); }
 
 /* ---- chat ---- */
-#chat { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
-#msgwrap { flex: 1; min-height: 0; display: flex; position: relative; }
-#messages { flex: 1; min-width: 0; overflow-y: auto; padding: 8px 24px 24px; }
-#items, #working, #cards, #note, #composer { max-width: var(--chat-width); width: 100%; margin-left: auto; margin-right: auto; box-sizing: border-box; }
-#items { display: flex; flex-direction: column; gap: var(--sp-exchange); }
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.msgwrap { flex: 1; min-height: 0; display: flex; position: relative; }
+.messages { flex: 1; min-width: 0; overflow-y: auto; padding: 8px 24px 24px; }
+.items, .working, .cards, .note, .composer { max-width: var(--chat-width); width: 100%; margin-left: auto; margin-right: auto; box-sizing: border-box; }
+.items { display: flex; flex-direction: column; gap: var(--sp-exchange); }
 .user { align-self: flex-end; max-width: 80%; padding: 10px 16px; border-radius: 16px; background: var(--user-bg); color: var(--user-fg);
   font-size: var(--msg-size); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .userwrap { align-self: flex-end; max-width: 80%; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; }
@@ -156,10 +156,10 @@ body.sizing, body.sizing * { cursor: col-resize !important; user-select: none !i
 .s-big { font-size: 1.3em; line-height: 1.3; } .s-small { font-size: 0.85em; }
 
 /* The big title ({fx=title}, also old {fx=dither} and {fx=mono}): plain text, much bigger, scaled down
-   with the reading column (cqi: the width of #messages). Under the cursor a soft glow in the accent
+   with the reading column (cqi: the width of .messages). Under the cursor a soft glow in the accent
    eases in, and eases out when it leaves. Flat color, no gradient; --fx-glow (design.json
    effects.glow, 0-1) sets its strength. Reduce motion: no glow. */
-#messages, #sheet, #artifactbody { container-type: inline-size; }
+.messages, #sheet, #artifactbody { container-type: inline-size; }
 .claude h1.fx, .claude h2.fx { font-size: clamp(var(--h1-size), 11cqi, var(--fx-size)); font-weight: var(--fx-weight); line-height: 1.04; letter-spacing: -0.015em;
   text-shadow: 0 0 0 transparent; transition: text-shadow 0.6s ease-out; }
 .claude h1.fx:hover, .claude h2.fx:hover { transition-duration: 0.35s;
@@ -266,8 +266,8 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .tools .names { display: none; }
 .tools.open .names { display: inline; }
 .tools.open .count { display: none; }
-#working { display: flex; align-items: center; gap: 10px; color: var(--muted-text); font-size: 12px; padding-top: 16px; }
-#working[hidden] { display: none; }
+.working { display: flex; align-items: center; gap: 10px; color: var(--muted-text); font-size: 12px; padding-top: 16px; }
+.working[hidden] { display: none; }
 .dots { display: flex; gap: 4px; }
 .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--t-accent); animation: dot 1.2s infinite ease-in-out; }
 .dots i:nth-child(2) { animation-delay: 0.15s; } .dots i:nth-child(3) { animation-delay: 0.3s; }
@@ -280,7 +280,7 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .chatdots { display: inline-flex; gap: 3px; margin-left: 6px; flex-shrink: 0; }
 .chatdots i { width: 4px; height: 4px; border-radius: 50%; background: var(--t-accent); animation: dot 1.2s infinite ease-in-out; }
 .chatdots i:nth-child(2) { animation-delay: 0.15s; } .chatdots i:nth-child(3) { animation-delay: 0.3s; }
-#working.elsewhere .dots { display: none; }
+.working.elsewhere .dots { display: none; }
 @keyframes dot { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
 
 /* actions under a reply */
@@ -303,26 +303,26 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 /* jump to latest, outline rail */
 /* Right edge of the chat area, just above the message box. .tight (no margin beside the column): on the
    right end of the box's top edge, over the tray's border, not over text. */
-#jump { position: absolute; right: 16px; bottom: calc(100% + 6px); display: flex; padding: 7px; border: 1px solid var(--border); border-radius: 50%; background: var(--bg); color: var(--muted-text); box-shadow: 0 2px 8px rgba(0,0,0,0.12); cursor: pointer; z-index: 3; }
-#jump[hidden] { display: none; }
-#jump.tight { right: var(--jump-right, 36px); bottom: calc(100% - 15px); }
-#rail { position: absolute; top: 24px; right: 16px; width: 170px; max-height: 60%; overflow-y: auto; padding-left: 10px; border-left: 1px solid var(--border); font-size: 12px; z-index: 2; }
-#rail[hidden] { display: none; }
+.jump { position: absolute; right: 16px; bottom: calc(100% + 6px); display: flex; padding: 7px; border: 1px solid var(--border); border-radius: 50%; background: var(--bg); color: var(--muted-text); box-shadow: 0 2px 8px rgba(0,0,0,0.12); cursor: pointer; z-index: 3; }
+.jump[hidden] { display: none; }
+.jump.tight { right: var(--jump-right, 36px); bottom: calc(100% - 15px); }
+.rail { position: absolute; top: 24px; right: 16px; width: 170px; max-height: 60%; overflow-y: auto; padding-left: 10px; border-left: 1px solid var(--border); font-size: 12px; z-index: 2; }
+.rail[hidden] { display: none; }
 .railitem { display: block; width: 100%; padding: 3px 0; border: 0; background: none; color: var(--muted-text); text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .railitem.l2 { padding-left: 10px; } .railitem.l3 { padding-left: 20px; }
 .railitem:hover, .railitem.on { color: var(--text); }
 .railitem.on { font-weight: 600; }
 
 /* composer: chips, the text box, then one row of controls, all inside the tray */
-#note { padding: 0 4px 6px; color: var(--t-warn); font-size: var(--small-size); }
-#composerwrap { padding: 0 24px 16px; flex-shrink: 0; position: relative; }
-#composer { display: flex; flex-direction: column; gap: 6px; padding: 12px 12px 10px 16px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,0.06); }
-#composer:focus-within { border-color: var(--t-accent); }
-#composer.dropping { border-style: dashed; border-color: var(--t-accent); }
-#input { display: block; width: 100%; box-sizing: border-box; resize: none; border: 0; outline: 0; background: none; padding: 2px 0; font-size: var(--msg-size); line-height: 1.5; max-height: 12em; }
-#input::placeholder { color: var(--muted-text); }
-#chips { display: flex; flex-wrap: wrap; gap: 6px; }
-#chips:empty { display: none; }
+.note { padding: 0 4px 6px; color: var(--t-warn); font-size: var(--small-size); }
+.composerwrap { padding: 0 24px 16px; flex-shrink: 0; position: relative; }
+.composer { display: flex; flex-direction: column; gap: 6px; padding: 12px 12px 10px 16px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,0.06); }
+.composer:focus-within { border-color: var(--t-accent); }
+.composer.dropping { border-style: dashed; border-color: var(--t-accent); }
+.input { display: block; width: 100%; box-sizing: border-box; resize: none; border: 0; outline: 0; background: none; padding: 2px 0; font-size: var(--msg-size); line-height: 1.5; max-height: 12em; }
+.input::placeholder { color: var(--muted-text); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips:empty { display: none; }
 .chip { display: flex; align-items: center; gap: 6px; max-width: 260px; padding: 4px 4px 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-size: var(--small-size); }
 .chip.warn { border-color: var(--t-warn); }
 .chip.warn .chipsize { color: var(--t-warn); }
@@ -330,17 +330,17 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .chipsize { color: var(--muted-text); white-space: nowrap; }
 .chipx { display: flex; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--muted-text); cursor: pointer; }
 .chipx:hover { background: var(--raised); color: var(--text); }
-#controls { display: flex; align-items: center; gap: 2px; margin-left: -6px; }
-#controls .grow { flex: 1; }
+.controls { display: flex; align-items: center; gap: 2px; margin-left: -6px; }
+.controls .grow { flex: 1; }
 .ctl { display: flex; align-items: center; gap: 4px; padding: 5px 8px; border: 0; border-radius: 8px; background: none; color: var(--muted-text); font-size: var(--small-size); white-space: nowrap; cursor: pointer; }
 .ctl:hover, .ctl.open { background: var(--raised); color: var(--text); }
 .ctl[aria-disabled=true] { opacity: 0.45; cursor: default; background: none; }
 .ctl.warn { color: var(--t-warn); }
 .ctl svg { flex-shrink: 0; }
-#send { display: flex; margin-left: 4px; padding: 8px; border: 0; border-radius: 50%; background: var(--accent-fill); color: var(--accent-on); cursor: pointer; flex-shrink: 0; }
-#send:disabled { background: var(--border); color: var(--muted-text); cursor: default; }
-#popover { position: absolute; bottom: 60px; z-index: 6; min-width: 230px; max-width: 380px; max-height: 50vh; overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 6px 24px rgba(0,0,0,0.18); }
-#popover[hidden] { display: none; }
+.send { display: flex; margin-left: 4px; padding: 8px; border: 0; border-radius: 50%; background: var(--accent-fill); color: var(--accent-on); cursor: pointer; flex-shrink: 0; }
+.send:disabled { background: var(--border); color: var(--muted-text); cursor: default; }
+.popover { position: absolute; bottom: 60px; z-index: 6; min-width: 230px; max-width: 380px; max-height: 50vh; overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 6px 24px rgba(0,0,0,0.18); }
+.popover[hidden] { display: none; }
 .poptitle { padding: 4px 8px 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted-text); }
 .popitem { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 0; border-radius: 7px; background: none; text-align: left; cursor: pointer; }
 .popitem:hover { background: var(--raised); }
@@ -386,13 +386,65 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 /* terminal: hidden by default (Cmd+J shows it). Kept off-screen at a real size so claude gets a sane width,
    and tall: on a short terminal Claude Code redraws and wipes its screen while a long reply grows, which
    would leave nothing for the live preview to read. */
-#term { height: 40vh; flex-shrink: 0; margin: 0 12px 12px; padding: 6px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--code-bg); }
-body:not(.showterm) #term { position: fixed; left: -10000px; top: 0; width: calc(100vw - 280px); height: 2600px; margin: 0; }
+.term { flex: 0 0 40%; min-height: 120px; box-sizing: border-box; margin: 0 12px 12px; padding: 6px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--code-bg); }
+.pane:not(.showterm) .term { position: fixed; left: -10000px; top: 0; width: calc(100vw - 280px); height: 2600px; margin: 0; }
+
+/* ---- workspace: a split tree of panes (layout.ts), like terminal panels. Each pane is one chat. Sizes
+   are the split's shares (flex-grow, set by workspace.ts); dividers sit between siblings. ---- */
+#workspace { flex: 1; min-height: 0; display: flex; position: relative; }
+#workspace > .pane, #workspace > .split { flex: 1 1 0; }
+#parking { display: none; }
+.split { display: flex; min-width: 0; min-height: 0; }
+.split.row { flex-direction: row; }
+.split.col { flex-direction: column; }
+.split > .pane, .split > .split { flex-basis: 0; flex-shrink: 1; }
+.divider { flex: 0 0 5px; position: relative; z-index: 4; touch-action: none; }
+.split.row > .divider { cursor: col-resize; }
+.split.col > .divider { cursor: row-resize; }
+.divider::after { content: ''; position: absolute; background: var(--border); transition: background 0.12s; }
+.split.row > .divider::after { top: 0; bottom: 0; left: 2px; width: 1px; }
+.split.col > .divider::after { left: 0; right: 0; top: 2px; height: 1px; }
+.split.row > .divider:hover::after, .split.row > .divider.drag::after { left: 1px; width: 3px; background: var(--accent-fill); }
+.split.col > .divider:hover::after, .split.col > .divider.drag::after { top: 1px; height: 3px; background: var(--accent-fill); }
+body.sizing-row, body.sizing-row * { cursor: col-resize !important; user-select: none !important; }
+body.sizing-col, body.sizing-col * { cursor: row-resize !important; user-select: none !important; }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: var(--bg); }
+.pane > .chat { flex: 1; }
+.panehead { display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 6px 0 12px; flex-shrink: 0; border-bottom: 1px solid var(--border); color: var(--muted-text); cursor: grab; user-select: none; }
+body.multi .pane.focused .panehead { color: var(--text); box-shadow: inset 0 2px 0 var(--t-accent); }
+.panetitle { min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panetitle .renamebox { font-weight: 400; }
+.panebranch { min-width: 0; margin-left: 6px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; color: var(--muted-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 2; }
+.panebranch:empty { display: none; }
+.panehead .chatdots { margin-left: 8px; }
+.panefill { flex: 1; min-width: 8px; }
+.panebtn { display: flex; padding: 4px; border: 0; border-radius: 6px; background: none; color: var(--muted-text); cursor: pointer; flex-shrink: 0; }
+.panebtn:hover, .panebtn.open { background: var(--raised); color: var(--text); }
+.panebtn[aria-disabled=true] { opacity: 0.4; cursor: default; background: none; }
+.panemenu { position: absolute; top: 30px; right: 6px; z-index: 7; min-width: 240px; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 6px 24px rgba(0,0,0,0.18); }
+.panemenu[hidden] { display: none; }
+.panemenu .popitem[aria-disabled=true] { opacity: 0.45; cursor: default; background: none; }
+.popkey { margin-left: auto; padding-left: 12px; font-size: var(--small-size); color: var(--muted-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* moving a pane: its title bar follows the pointer; the target pane shows where it would go */
+.paneghost { position: fixed; z-index: 40; pointer-events: none; padding: 5px 12px; border: 1px solid var(--t-accent); border-radius: 8px; background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,0.2); max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dropzone { position: fixed; z-index: 39; pointer-events: none; border: 2px solid var(--t-accent); border-radius: 8px; background: color-mix(in srgb, var(--t-accent) 16%, transparent); transition: left 0.08s, top 0.08s, width 0.08s, height 0.08s; }
+.dropzone[hidden] { display: none; }
+body.panedrag, body.panedrag * { cursor: grabbing !important; user-select: none !important; }
+.pane.dragging { opacity: 0.55; }
+/* a narrow pane: less padding, and the controls may wrap */
+.pane { container: pane / inline-size; }
+@container pane (max-width: 520px) {
+  .messages { padding: 8px 14px 18px; }
+  .composerwrap { padding: 0 10px 10px; }
+  .cardswrap { padding: 0 10px; }
+  .controls { flex-wrap: wrap; row-gap: 2px; }
+  .rail { display: none; }
+}
 
 /* permission and question cards */
-#cardswrap { padding: 0 24px; flex-shrink: 0; }
-#cards { max-height: 55vh; overflow-y: auto; }
-#cards:empty { display: none; }
+.cardswrap { padding: 0 24px; flex-shrink: 0; }
+.cards { max-height: 55vh; overflow-y: auto; }
+.cards:empty { display: none; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; font-size: calc(var(--ui-size) + 1px); }
 .card-title { font-weight: 600; margin-bottom: 4px; }
 .card-label { font-size: 0.8em; color: var(--muted-text); margin-top: 4px; }
@@ -423,7 +475,7 @@ body:not(.showterm) #term { position: fixed; left: -10000px; top: 0; width: calc
 .timer-fill { height: 100%; border-radius: 1.5px; transition: width 0.25s linear, background-color 0.25s; }
 .queue { margin-top: 4px; font-size: 0.75em; color: var(--muted-text); }
 .queue:empty { display: none; }
-#cards > :last-child { margin-bottom: 8px; }
+.cards > :last-child { margin-bottom: 8px; }
 
 /* reply graph */
 #graphview { position: absolute; inset: 0; z-index: 10; background: var(--bg); display: flex; flex-direction: column; }
@@ -468,7 +520,7 @@ body:not(.showterm) #term { position: fixed; left: -10000px; top: 0; width: calc
   body.sideopen #sidebar { position: absolute; left: 0; top: 0; bottom: 0; z-index: 8; box-shadow: 4px 0 16px rgba(0,0,0,0.2); }
   body.artopen #center { display: none; }
   #artifact { width: auto; flex: 1; }
-  #rail { display: none; }
+  .rail { display: none; }
 }
 @media (min-width: 1001px) { body.sideclosed #sidebar { display: none; } }
-@media (max-width: 1099px) { #rail { display: none; } }
+@media (max-width: 1099px) { .rail { display: none; } }

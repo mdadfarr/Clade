@@ -32,7 +32,7 @@ test('focus ring: the system ring is off, the app ring is accent and keyboard on
 });
 
 test('the jump arrow is not centered over the reading column', () => {
-  const jump = rule('#jump');
+  const jump = rule('.jump');
   assert.doesNotMatch(jump, /left:\s*50%/);
   assert.match(jump, /right:/);
 });
