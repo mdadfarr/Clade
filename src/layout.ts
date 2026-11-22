@@ -197,8 +197,33 @@ const Lay = (() => {
    *  is the center (swap); elsewhere the nearest edge. */
   function dropZone(fx: number, fy: number): LSide | 'center' {
     if (fx > 0.3 && fx < 0.7 && fy > 0.3 && fy < 0.7) return 'center';
+    return edgeZone(fx, fy);
+  }
+
+  /** The nearest edge to a point in a box (fractions 0..1); no center. */
+  function edgeZone(fx: number, fy: number): LSide {
     const d: [LSide, number][] = [['left', fx], ['right', 1 - fx], ['top', fy], ['bottom', 1 - fy]];
     return d.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
+  }
+
+  /** Where every pane sits (px from the top left) when the tree fills w×h: each split gives its children
+   *  their shares of the length left after the dividers. Minimum sizes are not applied. */
+  function rects(root: LNode, w: number, h: number, gap: number): Record<string, { x: number; y: number; w: number; h: number }> {
+    const out: Record<string, { x: number; y: number; w: number; h: number }> = {};
+    const walk = (n: LNode, x: number, y: number, w: number, h: number) => {
+      if (n.t === 'pane') return void (out[n.id] = { x, y, w, h });
+      const row = n.dir === 'row';
+      const free = Math.max(0, (row ? w : h) - gap * (n.kids.length - 1));
+      let at = row ? x : y;
+      n.kids.forEach((k, i) => {
+        const len = free * n.sizes[i];
+        if (row) walk(k, at, y, len, h);
+        else walk(k, x, at, w, len);
+        at += len + gap;
+      });
+    };
+    walk(root, 0, 0, w, h);
+    return out;
   }
 
   /** The next or previous pane in focus order (wraps around). */
@@ -260,7 +285,7 @@ const Lay = (() => {
     return { v: 1, root: tree, panes, focus, max };
   }
 
-  return { normalize, paneIds, insertBeside, appendRoot, removePane, movePane, swapPanes, minSize, at, withSizes, dragDivider, equalPair, dropZone, nextPane, single, parseWorkspace, PANE_ID, MAX_PANES };
+  return { normalize, paneIds, insertBeside, appendRoot, removePane, movePane, swapPanes, minSize, at, withSizes, dragDivider, equalPair, dropZone, edgeZone, rects, nextPane, single, parseWorkspace, PANE_ID, MAX_PANES };
 })();
 
 if (typeof module !== 'undefined') module.exports = Lay;

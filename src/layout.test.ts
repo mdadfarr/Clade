@@ -110,6 +110,24 @@ test('drop zones: the middle swaps, elsewhere the nearest edge', () => {
   assert.strictEqual(L.dropZone(0.6, 0.9), 'bottom');
 });
 
+test('edge zones: always the nearest edge, also in the middle', () => {
+  assert.strictEqual(L.edgeZone(0.45, 0.5), 'left');
+  assert.strictEqual(L.edgeZone(0.55, 0.5), 'right');
+  assert.strictEqual(L.edgeZone(0.5, 0.45), 'top');
+  assert.strictEqual(L.edgeZone(0.9, 0.95), 'bottom');
+});
+
+test('pane rectangles follow the shares, with dividers between children', () => {
+  let r = L.insertBeside(p('pa'), 'pa', 'pb', 'right');
+  r = L.insertBeside(r, 'pb', 'pc', 'bottom');
+  assert.deepStrictEqual(L.rects(r, 1005, 605, 5), {
+    pa: { x: 0, y: 0, w: 500, h: 605 },
+    pb: { x: 505, y: 0, w: 500, h: 300 },
+    pc: { x: 505, y: 305, w: 500, h: 300 },
+  });
+  assert.deepStrictEqual(L.rects(p('pa'), 800, 600, 5), { pa: { x: 0, y: 0, w: 800, h: 600 } });
+});
+
 test('focus order wraps both ways', () => {
   let r = L.insertBeside(p('pa'), 'pa', 'pb', 'right');
   r = L.insertBeside(r, 'pb', 'pc', 'right');

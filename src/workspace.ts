@@ -314,6 +314,106 @@ function newChatHere(): void {
 }
 api.onFocusPane((p) => focusPaneView(panes.get(p), true));
 
+// ---- drag a chat from the chat list onto the workspace (like VS Code). The pane under the pointer splits
+// toward its nearest edge; near the workspace's own edge a full-length column or row opens instead. A
+// shadow shows where the chat will be. A chat already open in a pane moves there with its pane (its claude
+// keeps running). Where the new pane would not fit, there is no shadow and the drop does nothing. ----
+let dragChat = ''; // the session being dragged from the chat list ('' when none)
+let lastPlan: DropPlan | null = null; // kept while the pointer crosses a divider (no pane under it)
+const OUTER = 28; // px from the workspace edge that count as its edge
+const DROP_ID = 'pdrop'; // stands in for the new pane while planning
+const shadow = byId('dropzone'); // index.html; styled in app.css (.dropzone)
+
+function startChatDrag(session: string): void {
+  dragChat = session;
+  lastPlan = null;
+}
+function endChatDrag(): void {
+  if (!dragChat) return;
+  dragChat = '';
+  lastPlan = null;
+  shadow.hidden = true;
+  renderChats(); // held back during the drag
+}
+
+type DropPlan = { root: LNode; place: (root: LNode, pid: string) => LNode; moving: PaneView | null; pid: string };
+function planDrop(x: number, y: number): DropPlan | null {
+  const box = wsEl.getBoundingClientRect();
+  if (x < box.left || x > box.right || y < box.top || y > box.bottom) return null;
+  const moving = [...panes.values()].find((v) => v.chat.session === dragChat) ?? null;
+  const base = moving ? Lay.removePane(ws.root, moving.id) : ws.root;
+  if (!base) return null; // the only pane, dropped on itself
+  const pid = moving ? moving.id : DROP_ID;
+  const edges: [LSide, number][] = [['left', x - box.left], ['right', box.right - x], ['top', y - box.top], ['bottom', box.bottom - y]];
+  const [edge, dist] = edges.reduce((a, b) => (b[1] < a[1] ? b : a));
+  let place: DropPlan['place'];
+  if (dist < OUTER) place = (root, id) => Lay.appendRoot(root, id, edge);
+  else {
+    const hit = document.elementFromPoint(x, y);
+    if (hit?.closest('#workspace .divider')) return lastPlan;
+    const el = hit?.closest('#workspace .pane') as HTMLElement | null;
+    const target = el?.dataset.pane;
+    if (!el || !target || target === moving?.id) return null;
+    const r = el.getBoundingClientRect();
+    const side = Lay.edgeZone((x - r.left) / r.width, (y - r.top) / r.height);
+    place = (root, id) => Lay.insertBeside(root, target, id, side);
+  }
+  let root: LNode;
+  try {
+    root = place(base, pid);
+  } catch {
+    return null;
+  }
+  return fits(root) ? { root, place, moving, pid } : null;
+}
+
+wsEl.addEventListener(
+  'dragover',
+  (e) => {
+    if (!dragChat || !e.dataTransfer) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (ws.max) {
+      ws.max = null; // show the whole layout to drop into
+      renderLayout();
+    }
+    const plan = (lastPlan = planDrop(e.clientX, e.clientY));
+    e.dataTransfer.dropEffect = plan ? 'move' : 'none';
+    if (!plan) return void (shadow.hidden = true);
+    const box = wsEl.getBoundingClientRect();
+    const r = Lay.rects(plan.root, box.width, box.height, GAP)[plan.pid];
+    shadow.style.left = `${box.left + r.x}px`;
+    shadow.style.top = `${box.top + r.y}px`;
+    shadow.style.width = `${r.w}px`;
+    shadow.style.height = `${r.h}px`;
+    shadow.hidden = false;
+  },
+  true,
+);
+// Chromium's dragleave often has no relatedTarget (it fires between child elements too): use the point.
+wsEl.addEventListener('dragleave', (e) => {
+  const b = wsEl.getBoundingClientRect();
+  if (dragChat && (e.clientX <= b.left || e.clientX >= b.right || e.clientY <= b.top || e.clientY >= b.bottom)) shadow.hidden = true;
+});
+wsEl.addEventListener(
+  'drop',
+  (e) => {
+    if (!dragChat) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const session = dragChat;
+    const plan = planDrop(e.clientX, e.clientY);
+    endChatDrag();
+    if (!plan) return;
+    if (!plan.moving) return void addPane(plan.place, { session });
+    ws.root = plan.root;
+    ws.max = null;
+    renderLayout();
+    focusPaneView(plan.moving, true);
+  },
+  true,
+);
+
 // ---- keys (from the app menu, so they work wherever the focus is) ----
 api.onShortcut((name) => {
   const v = fp();

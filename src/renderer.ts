@@ -1965,7 +1965,7 @@ function renameIn(el: HTMLElement, rid: string, name: string, inPlace = false): 
   field.addEventListener('blur', () => finish(true));
 }
 function renderChats(): void {
-  if (renaming) return;
+  if (renaming || dragChat) return; // a drag keeps its row (redrawn when the drag ends)
   const box = byId('chats');
   box.replaceChildren();
   let group = '';
@@ -2001,6 +2001,15 @@ function renderChats(): void {
       document.body.classList.remove('sideopen');
       openChat(c.open, c.panes ?? []);
     });
+    // Drag the row onto the workspace to open the chat in a new pane there (workspace.ts).
+    row.draggable = true;
+    row.addEventListener('dragstart', (e) => {
+      if (renaming || !e.dataTransfer) return e.preventDefault();
+      e.dataTransfer.setData('application/x-clade-chat', c.open);
+      e.dataTransfer.effectAllowed = 'move';
+      startChatDrag(c.open);
+    });
+    row.addEventListener('dragend', endChatDrag);
   }
 }
 api.onChats((c) => {
