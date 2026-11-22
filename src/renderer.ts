@@ -1188,15 +1188,14 @@ api.onPrefill((p, t, why) => panes.get(p)?.prefill(t, why));
 api.onPaneModes((p, m, e) => panes.get(p)?.setModes(m, e));
 api.onPaneTitles((t) => {
   for (const [p, v] of panes) if (t[p]) v.setTitle(t[p]);
+  rebuildGraph(); // the chat names above the trees
 });
 api.onGraph((p, g) => {
   const v = panes.get(p);
   if (!v) return;
   v.setGraph(g);
-  if (p === focusId) {
-    setGraph(g);
-    renderToolbar();
-  }
+  rebuildGraph(); // every pane's chat is in the graph view
+  if (p === focusId) renderToolbar();
 });
 api.onToggleTerm(() => {
   const v = fp();
@@ -1307,6 +1306,41 @@ function setGraph(g: GraphData): void {
   drawSoon();
 }
 
+// The graph view shows every chat open in the workspace: one tree per chat, side by side in the panes'
+// layout order, with the chat's name above it. Two panes on the same chat (or on branches of it) share
+// one tree. Each pane's own place in its tree is marked; the focused pane's is the current node.
+let trees: { title: string; x: number }[] = [];
+let paneSpots = new Set<string>(); // the newest reply shown in each pane
+function rebuildGraph(): void {
+  const f = fp();
+  const nodes: GNode[] = [];
+  const have = new Set<string>();
+  trees = [];
+  paneSpots = new Set();
+  let col = 0;
+  const order = Lay.paneIds(ws.root).map((pid) => panes.get(pid)).filter((v): v is PaneView => !!v);
+  for (const v of order) {
+    if (v.graph.current) paneSpots.add(v.graph.current);
+    if (!v.graph.nodes.length || v.graph.nodes.some((n) => have.has(n.id))) continue; // same chat as a tree already drawn
+    const w = Math.max(...v.graph.nodes.map((n) => n.x)) + 1;
+    for (const n of v.graph.nodes) {
+      have.add(n.id);
+      nodes.push({ ...n, x: n.x + col });
+    }
+    trees.push({ title: v.title.title, x: col });
+    col += w + 1; // an empty column between two chats
+  }
+  setGraph({ nodes, current: f?.graph.current ?? null, session: f?.chat.session ?? '', error: f?.graph.error ?? null });
+}
+/** The pane a node opens in: the one showing its session, else the focused pane if the node is in its
+ *  chat, else a pane on that chat. */
+function paneForNode(n: GNode): PaneView | undefined {
+  const f = fp();
+  const all = [...panes.values()];
+  const inChat = (v: PaneView) => v.graph.nodes.some((x) => x.id === n.id);
+  return all.find((v) => v.chat.session === n.session) ?? (f && inChat(f) ? f : all.find(inChat)) ?? f;
+}
+
 function renderToolbar(): void {
   byId('treenote').textContent = graph.error ? `branches.json unreadable (${graph.error}); branches show as separate chats` : '';
   renderChats();
@@ -1333,6 +1367,8 @@ function drawGraph(): void {
   const root = svg(gsvg, 'g', { transform: `translate(${view.tx} ${view.ty}) scale(${view.s})` });
   const lines = svg(root, 'g', {});
   const boxes = svg(root, 'g', {});
+  if (trees.length > 1 && view.s > 0.2)
+    for (const t of trees) svg(root, 'text', { x: t.x * COLW, y: -16, class: 'gtree' }).textContent = t.title.length > 40 ? t.title.slice(0, 39) + '…' : t.title;
   for (const n of graph.nodes) {
     const p = at(n);
     const qn = n.parent ? byNode.get(n.parent) : undefined;
@@ -1347,7 +1383,7 @@ function drawGraph(): void {
       }
     }
     if (!seen(p.x, p.y, p.x + NW, p.y + NH)) continue;
-    const g = svg(boxes, 'g', { class: 'gnode' + (n.id === graph.current ? ' current' : ''), 'data-node': n.id });
+    const g = svg(boxes, 'g', { class: 'gnode' + (n.id === graph.current ? ' current' : paneSpots.has(n.id) ? ' here' : ''), 'data-node': n.id });
     svg(g, 'rect', { x: p.x, y: p.y, width: NW, height: NH, rx: 7 });
     if (view.s > 0.35) svg(g, 'text', { x: p.x + 10, y: p.y + 17 }).textContent = shortLabel(n.label || '…');
   }
@@ -1413,7 +1449,11 @@ function openNodeIn(v: PaneView | undefined, n: GNode): void {
   }
   api.openSession(v.id, n.session);
 }
-const openNode = (n: GNode) => openNodeIn(fp(), n);
+function openNode(n: GNode): void {
+  const v = paneForNode(n);
+  if (v && v.id !== focusId) focusPaneView(v); // a reply of another pane's chat opens in that pane
+  openNodeIn(v, n);
+}
 
 // Hover: first line of the reply, and a "Branch from here" button.
 let popTimer: number | undefined;
@@ -1431,12 +1471,14 @@ function showPop(n: GNode): void {
   add(gpop, 'div', 'gfirst').textContent = n.first || '(no text)';
   const b = add(gpop, 'button', 'gbranch') as HTMLButtonElement;
   b.textContent = 'Branch from here';
-  const why = busy() ? 'Disabled while Claude is working' : n.canBranch ? '' : 'Branch is not possible here';
+  const target = paneForNode(n);
+  const why = target?.busy() ? 'Disabled while Claude is working' : n.canBranch ? '' : 'Branch is not possible here';
   b.disabled = !!why;
-  b.title = why || 'New branch that ends at this reply, in the focused pane';
+  b.title = why || 'New branch that ends at this reply, in the pane of its chat';
   b.addEventListener('click', () => {
-    const v = fp();
+    const v = paneForNode(n);
     if (!v || v.busy() || !n.canBranch) return;
+    if (v.id !== focusId) focusPaneView(v);
     api.branch(v.id, n.reply, n.session);
     openGraph(false);
   });
@@ -1625,8 +1667,10 @@ function onPinch(e: WheelEvent): void {
   // Zoomed in as far as the graph goes, fingers still moving apart: move into the reply under them.
   const hit = nodeAtPoint(e.clientX, e.clientY);
   if (!hit) return;
-  const other = hit.session !== graph.session;
-  if (other && busy()) return showNote('Cannot switch sessions while Claude is working in this pane.', 4000);
+  const target = paneForNode(hit);
+  const switches = !!target && hit.session !== target.chat.session;
+  if (switches && target!.busy()) return showNote('Cannot switch sessions while Claude is working in that pane.', 4000);
+  const other = switches || (!!target && target.id !== focusId); // the chat behind is not the one moved into
   const p = at(hit);
   trip = { node: hit, fx: view.tx + (p.x + NW / 2) * view.s, fy: view.ty + (p.y + NH / 2) * view.s, fromChat: false, other };
 }

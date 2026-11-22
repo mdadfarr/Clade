@@ -23,6 +23,7 @@ function fits(root: LNode): boolean {
 
 /** Draw the tree: split boxes in rows and columns, the panes' own elements moved into them. */
 function renderLayout(): void {
+  rebuildGraph(); // panes added, closed or moved: the graph's trees follow the layout order
   const active = document.activeElement;
   const holds = [...panes.values()].map((v) => v.holdScroll());
   const shown = ws.max && panes.has(ws.max) ? ({ t: 'pane', id: ws.max } as LNode) : ws.root;
@@ -125,7 +126,7 @@ function focusPaneView(v: PaneView | undefined, typeHere = false): void {
   for (const x of panes.values()) x.el.classList.toggle('focused', x.id === focusId);
   if (changed) {
     api.paneFocus(v.id);
-    setGraph(v.graph);
+    rebuildGraph();
     renderToolbar();
   }
   if (typeHere) v.focusInput();
