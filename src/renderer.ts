@@ -2021,6 +2021,12 @@ byId('newchat').addEventListener('click', () => {
   newChatHere();
 });
 const narrow = window.matchMedia('(max-width: 1000px)');
+// The narrow window's chat list is a drawer over the chats. Crossing the line (leaving full screen, zoom)
+// closes it, so it does not come back on top of the chats by itself.
+narrow.addEventListener('change', () => {
+  document.body.classList.remove('sideopen');
+  placeArtifact();
+});
 // ---- chat list width: drag its right edge (160 to 480 px), arrow keys on the edge, double-click for 240.
 // Saved in design.json (layout.sidebarWidth) when the drag ends. ----
 const grip = byId('sidegrip');
