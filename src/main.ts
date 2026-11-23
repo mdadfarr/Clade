@@ -22,6 +22,11 @@ import { buildGraph, layoutGraph } from './graph';
 import { Branch, firstWords, parseBranches, UUID } from './branches';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { Action, answerBody, answeredCalls, CardView, HOOK_MARK, HookInput, makeCard, mergeHook, parseHookInput } from './cards';
+import { pickStartFolder, readSavedFolder, saveFolder } from './folder-store';
+import { loginShellPath, mergePaths } from './shell-path';
+
+// Opened from the Dock or Spotlight, the app gets macOS's short PATH and would not find `claude`.
+if (app.isPackaged) process.env.PATH = mergePaths(loginShellPath(), process.env.PATH);
 
 const WHEEL_LOG = process.env.CLADE_WHEEL_LOG === '1';
 registerArtifactScheme();
@@ -710,15 +715,30 @@ function typeWhenReady(r: Runner, p: pty.IPty, text: string): void {
   const limit = setTimeout(() => finish(false), 30000);
 }
 
+// The chats folder: a command-line folder, else the last one picked (folder-store.ts), else the dialog.
+const savedFolderFile = () => path.join(app.getPath('userData'), 'folder.json');
+async function askFolder(title: string): Promise<string | null> {
+  const opts: Electron.OpenDialogOptions = { title, properties: ['openDirectory', 'createDirectory'] };
+  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+  return r.canceled ? null : r.filePaths[0];
+}
 async function chooseFolder(): Promise<string | null> {
   // Optional folder argument: `npm start -- /some/folder`. In dev the first plain argument is the app path.
   const arg = process.argv.slice(1).filter((a) => !a.startsWith('-'))[app.isPackaged ? 0 : 1];
-  if (arg && fs.existsSync(arg) && fs.statSync(arg).isDirectory()) return path.resolve(arg);
-  const r = await dialog.showOpenDialog({
-    title: 'Choose a folder to run claude in',
-    properties: ['openDirectory', 'createDirectory'],
-  });
-  return r.canceled ? null : r.filePaths[0];
+  const start = pickStartFolder({ arg, saved: readSavedFolder(savedFolderFile()) });
+  const chosen = start ?? (await askFolder('Choose a folder to run claude in'));
+  if (chosen) saveFolder(savedFolderFile(), chosen);
+  return chosen;
+}
+/** Clade › Change Folder…: save the new folder and restart the app on it (everything is built on the folder). */
+async function changeFolder(): Promise<void> {
+  const next = await askFolder('Choose a new folder to run claude in');
+  if (!next || path.resolve(next) === path.resolve(folder)) return;
+  saveFolder(savedFolderFile(), next);
+  // Drop a folder given on the command line, so the restart opens the saved one.
+  const keep = process.argv.slice(1).filter((a) => a.startsWith('-'));
+  app.relaunch({ args: app.isPackaged ? keep : [process.argv[1], ...keep] });
+  app.quit();
 }
 
 function prepareFolder(): void {
@@ -765,6 +785,7 @@ app.whenReady().then(async () => {
         submenu: [
           { role: 'about' },
           { label: 'Settings…', accelerator: 'Cmd+,', click: shortcut('settings') },
+          { label: 'Change Folder…', accelerator: 'Cmd+O', click: () => void changeFolder() },
           { type: 'separator' },
           { role: 'hide' },
           { role: 'hideOthers' },

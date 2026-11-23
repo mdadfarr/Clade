@@ -21,6 +21,7 @@ Help
 | `Shift+Tab` | Next permission mode (in the message box) |
 | `Esc` | Stop Claude while it works; closes sheets and menus |
 | `Cmd+,` | Settings |
+| `Cmd+O` | Change the folder (the app restarts on it) |
 | `Cmd+U` | Attach files |
 | `Cmd+J` | Show or hide the terminal |
 | `Cmd+G` | Reply graph (also: pinch out on the chat) |
@@ -127,7 +128,7 @@ In the project folder:
 - `attachments/`: pasted images.
 - `.claude/settings.local.json`: the permission-card hook, the artifact rule, and skill switches. Only those entries are added; nothing else in the file is changed.
 
-In the app's own data folder (outside every project): `settings.json` (text size, model, thinking, mode and switches) and a small file that lets the permission hook reach this window.
+In the app's own data folder (outside every project): `settings.json` (text size, model, thinking, mode and switches), `folder.json` (the folder the app opens at launch) and a small file that lets the permission hook reach this window.
 
 The app itself never goes online. The account row reads `claude auth status` with all network access blocked. The usage bars in the sidebar menu come from Claude Code's own `/usage`: when you open the menu, the app types it into the hidden terminal, reads the numbers off the screen and closes it again. Claude Code fetches those numbers; the app reads no file for them.
 

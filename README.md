@@ -9,7 +9,15 @@ what you type.
 npm install
 npm start -- /path/to/project     # or pick a folder in the dialog
 npm test
+npm run package                   # builds out/Clade.app; drag it into /Applications
 ```
+
+The app opens the folder you picked last. Clade › Change Folder… (`Cmd+O`)
+picks another one and restarts the app on it. A folder given after `npm start --`
+wins and becomes the saved one. If the saved folder is gone, the dialog shows.
+
+`out/Clade.app` is a copy: run `npm run package` again to get changes to `src/`
+into it. It is signed ad hoc, so it runs on the Mac that built it (not notarized).
 
 A drawing Claude made in the reply (Haiku, "Draw the free-body diagram"), light, and dark with the usage bars open:
 
@@ -93,6 +101,9 @@ Session files (`~/.claude/projects/...`) are only read; a branch is a new file.
 | `src/main.ts` | main process: claude in a pty, sessions, branches, cards, wiring |
 | `src/session.ts`, `branches.ts`, `graph.ts`, `chats.ts` | session parsing, branch files, reply graph, chat list (pure) |
 | `src/cards.ts`, `hook.ts` | permission cards and the Claude Code hook |
+| `src/folder-store.ts` | the last chats folder: read, save, pick at launch (no Electron) |
+| `src/shell-path.ts` | PATH from the login shell, for an app opened from the Dock (no Electron) |
+| `scripts/package.mjs` | builds `out/Clade.app` with `@electron/packager` |
 | `src/design.ts`, `design-v2.ts`, `design-v1.ts` | design.json schema, contrast checks, older formats |
 | `src/themes.ts` | the base surfaces and 9 accents as stored colors (pure) |
 | `src/draw.ts` | the drawing parser, colors, preview size and save text (pure) |
