@@ -2304,10 +2304,13 @@ function quoteSource(shown: HTMLElement): string {
     const block = k.classList.contains('katex-display');
     k.replaceWith(document.createTextNode(block ? `\n$$${tex}$$\n` : `$${tex}$`));
   });
-  // innerText needs layout: measure off screen, in the chat column's styles.
+  // innerText needs layout: measure off screen, in the chat column's styles. Not visibility:hidden —
+  // innerText skips hidden text, which left it empty and fell back to selection.toString() (KaTeX's
+  // MathML, one symbol per line).
   const host = document.createElement('div');
   host.className = 'claude';
-  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:600px;visibility:hidden';
+  host.setAttribute('aria-hidden', 'true');
+  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:600px;pointer-events:none';
   host.appendChild(c);
   document.body.appendChild(host);
   const text = c.innerText;
