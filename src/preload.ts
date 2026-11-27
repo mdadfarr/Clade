@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('api', {
   appVersion: () => ipcRenderer.invoke('app-version'),
   resetDesign: () => ipcRenderer.send('reset-design'),
   openFolder: () => ipcRenderer.send('open-folder'),
+  changeFolder: () => ipcRenderer.send('change-folder'),
   openArtifact: (name: string, version?: number) => ipcRenderer.send('artifact-open', name, version),
   stepArtifact: (delta: number) => ipcRenderer.send('artifact-step', delta),
   reloadArtifact: () => ipcRenderer.send('artifact-reload'),

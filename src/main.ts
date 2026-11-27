@@ -1253,6 +1253,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('reset-design', reset);
   ipcMain.on('open-folder', () => void shell.openPath(folder));
+  ipcMain.on('change-folder', () => void changeFolder());
 
   ipcMain.on('pty-write', (_e, pane: unknown, d: unknown) => typeof d === 'string' && paneArg(pane)?.term?.write(d)); // only what the user types
   // A pane's text box: type the user's text into its terminal, then press Enter. Only on the user's Enter.

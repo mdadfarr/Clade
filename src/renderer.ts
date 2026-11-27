@@ -51,6 +51,7 @@ declare const api: {
   appVersion(): Promise<string>;
   resetDesign(): void;
   openFolder(): void;
+  changeFolder(): void;
   openArtifact(name: string, version?: number): void;
   stepArtifact(delta: number): void;
   reloadArtifact(): void;
@@ -1866,7 +1867,8 @@ function drawSettings(): void {
     b.textContent = label;
     b.addEventListener('click', click);
   };
-  btn('Open project folder', () => api.openFolder());
+  btn('Change folder…', () => api.changeFolder());
+  btn('Show in Finder', () => api.openFolder());
   btn('Reset design', () => api.resetDesign());
   btn('Done', () => openSettings(false));
   // Not built yet, said plainly so nobody looks for it.
