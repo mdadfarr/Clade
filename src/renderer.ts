@@ -994,7 +994,7 @@ function createPane(id: string): PaneView {
   // Everything is measured from the real layout, the start before anything changes. ----
   type Part = { el: HTMLElement; x: number; y: number; fromBottom: boolean }; // a piece of the middle box, placed in it
   type DiveStart = { box: DOMRect; radius: number; text: DOMRect; scroll: number; parts: Part[]; hello: { text: string; rect: DOMRect } | null; typed: string; scene: 'jelly' | 'picture' | '' };
-  type Dive = DiveStart & { raf: number; t0: number; pane: DOMRect; w0: number; goneAt: number; goAt: number; lift: number; layer: HTMLElement; mid: HTMLElement; clip: HTMLElement; inner: HTMLElement; src: Element | null; offset: number; anchor: number; helloEl: HTMLElement | null; shadow: string };
+  type Dive = DiveStart & { raf: number; t0: number; pane: DOMRect; w0: number; goneAt: number; goAt: number; lift: number; layer: HTMLElement; mid: HTMLElement; clip: HTMLElement; inner: HTMLElement; src: Element | null; offset: number; anchor: number; helloEl: HTMLElement | null; shadow: string; bubbles: Bubbles };
   function measureDive(): DiveStart {
     const box = composer.getBoundingClientRect();
     const at = (e: HTMLElement, fromBottom = false): Part => {
@@ -1038,8 +1038,7 @@ function createPane(id: string): PaneView {
     const clip = add(mid, 'div', 'midclip');
     const inner = add(clip, 'div', 'user flyinner');
     inner.textContent = d.typed; // until the bubble is in the chat: the box never shows empty
-    diveBubbles(d.box, P);
-    fly = { ...d, raf: 0, t0: performance.now(), pane: P, w0: 0, goneAt: 0, goAt: 0, lift: 0, layer, mid, clip, inner, src: null, offset: 0, anchor: -1, helloEl, shadow: getComputedStyle(composer).boxShadow };
+    fly = { ...d, raf: 0, t0: performance.now(), pane: P, w0: 0, goneAt: 0, goAt: 0, lift: 0, layer, mid, clip, inner, src: null, offset: 0, anchor: -1, helloEl, shadow: getComputedStyle(composer).boxShadow, bubbles: diveBubbles(P) };
     diveFrame(fly.t0); // the first frame is drawn now, before the new layout is ever painted
   }
   function diveFrame(now: number): void {
@@ -1110,6 +1109,7 @@ function createPane(id: string): PaneView {
     m.top = `${y - P.top}px`;
     m.width = `${w}px`;
     m.height = `${h}px`;
+    f.bubbles.feed(now, d, { x: x - P.left, y: y - P.top, w, h });
     m.borderRadius = `${lerp(f.radius, tcs ? parseFloat(tcs.borderTopLeftRadius) : f.radius, q)}px`;
     m.background = `color-mix(in srgb, var(--user-bubble) ${(q * 100).toFixed(2)}%, var(--input-bg))`;
     // the frame (1 px ring) and the soft shadow thin out: a bubble has neither; the box itself never fades
@@ -1141,11 +1141,16 @@ function createPane(id: string): PaneView {
     if (cam >= 1 && now - f.goAt >= TRAVEL_MS) return endDive();
     f.raf = requestAnimationFrame(diveFrame);
   }
-  /** ASCII bubbles rise from the message box as the camera dives, drawn in the jellyfish's own character grid:
-   *  the video is ASCII art in cells of JELLY_CELL video pixels, shown with object-fit: cover, so one cell on
-   *  screen is that times the video's scale, and the grid starts where the video's does. Each bubble is a
-   *  circle sampled per cell into the video's brightness ramp (small ones are one 'o' or '.'), in the accent. */
-  function diveBubbles(box: DOMRect, P: DOMRect): void {
+  /** ASCII bubbles in the water of the dive, drawn in the jellyfish's own character grid: the video is ASCII
+   *  art in cells of JELLY_CELL video pixels, shown with object-fit: cover, so one cell on screen is that times
+   *  the video's scale, and the grid starts where the video's does. The dive feeds them every frame
+   *  (feed: the camera's depth d and the middle box's rect in the pane): they come off the box's edges, as
+   *  many as the box moves through the water (the camera going down, the box travelling to its bubble), and
+   *  stay where they were in the water, so on screen they go up at the camera's speed, plus their own rise.
+   *  Each is a circle sampled per cell into the video's brightness ramp (small ones one 'o' or '.'), in the
+   *  accent. They play out after the dive, the camera still. */
+  type Bubbles = { feed(now: number, d: number, box: { x: number; y: number; w: number; h: number }): void; stop(): void };
+  function diveBubbles(P: DOMRect): Bubbles {
     const E = JELLY_EDGES;
     const jl = byId('jelly');
     const vw = jl.offsetWidth || window.innerWidth, vh = jl.offsetHeight || window.innerHeight;
@@ -1167,39 +1172,41 @@ function createPane(id: string): PaneView {
     ctx.textAlign = 'center';
     ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#C6623F';
     const RAMP = ' .:;otX%#@';
-    type B = { x: number; y: number; r: number; rise: number; sway: number; phase: number; delay: number; dur: number };
+    const PER_PX_CAMERA = 0.035, PER_PX_BOX = 0.03; // bubbles per px the box moves through the water
+    // wx, wy: where it is in the water (screen y + camera depth at birth); it rises on its own from there
+    type B = { wx: number; wy: number; r: number; buoy: number; sway: number; phase: number; born: number; life: number };
     const bubbles: B[] = [];
-    for (let i = 0; i < 22; i++) {
-      const big = i < 4; // a few rings, the rest single characters
+    let depth = 0, last = 0, prev: { x: number; y: number } | null = null, owed = 0, fed = true, raf = 0;
+    const spawn = (now: number, box: { x: number; y: number; w: number; h: number }) => {
+      // mostly off the top edge (the box sinks, the water goes past it upward), some off the sides
+      const side = Math.random();
+      const x = side < 0.7 ? box.x + Math.random() * box.w : side < 0.85 ? box.x - cw * Math.random() : box.x + box.w + cw * Math.random();
+      const y = side < 0.7 ? box.y + Math.random() * ch : box.y + Math.random() * box.h * 0.7;
+      const big = Math.random() < 0.12;
       bubbles.push({
-        x: box.left - P.left + Math.random() * box.width,
-        y: box.top - P.top + Math.random() * box.height * 0.5,
-        r: big ? cw * (1.6 + Math.random() * 1.6) : cw * (0.15 + Math.random() * 0.5),
-        rise: 160 + Math.random() * 320,
-        sway: cw * (1 + Math.random() * 2.5),
+        wx: x, wy: y + depth,
+        r: big ? cw * (1.4 + Math.random() * 1.4) : cw * (0.15 + Math.random() * 0.5),
+        buoy: 0.06 + Math.random() * 0.1, // px/ms, its own rise in the water
+        sway: cw * (0.5 + Math.random() * 1.5),
         phase: Math.random() * Math.PI * 2,
-        delay: Math.random() * 500,
-        dur: 1500 + Math.random() * 900,
+        born: now,
+        life: 1100 + Math.random() * 900,
       });
-    }
-    const t0 = performance.now();
-    const end = Math.max(...bubbles.map((b) => b.delay + b.dur));
-    const frame = (now: number) => {
-      const t = now - t0;
-      if (t > end || !canvas.isConnected) return canvas.remove();
+    };
+    const draw = (now: number) => {
+      for (let i = bubbles.length - 1; i >= 0; i--) if (now - bubbles[i].born >= bubbles[i].life) bubbles.splice(i, 1);
+      if (!fed && !bubbles.length) return canvas.remove();
       const cells = new Map<number, number>(); // cell -> brightness 0..1, the brightest bubble wins
       const put = (cx: number, cy: number, v: number) => {
-        const k = cy * 4096 + cx;
+        const k = (cy + 1024) * 4096 + cx + 1024;
         if (v > (cells.get(k) ?? 0)) cells.set(k, v);
       };
       for (const b of bubbles) {
-        const p = (t - b.delay) / b.dur;
-        if (p <= 0 || p >= 1) continue;
-        const e = 1 - (1 - p) * (1 - p); // slows as it nears the top
-        const x = b.x + Math.sin(b.phase + p * 5) * b.sway;
-        const y = b.y - b.rise * e;
-        const r = b.r * (0.8 + 0.3 * p);
-        const fade = Math.min(1, p * 6) * Math.min(1, (1 - p) * 3);
+        const a = now - b.born, p = a / b.life;
+        const x = b.wx + Math.sin(b.phase + a / 260) * b.sway * Math.min(1, p * 3);
+        const y = b.wy - depth - b.buoy * a * (1 + p); // the camera's way down, and its own rise, speeding up
+        const r = b.r * (0.6 + 0.6 * Math.min(1, p * 2)); // grows a little as it leaves the box
+        const fade = Math.min(1, p * 8) * Math.min(1, (1 - p) * 3);
         const col = Math.round((x - ox) / cw), row = Math.round((y - oy) / ch);
         if (r < cw * 0.45) {
           put(col, row, (r < cw * 0.3 ? 0.15 : 0.45) * fade); // '.' or 'o'
@@ -1210,24 +1217,38 @@ function createPane(id: string): PaneView {
         for (let dy = -m; dy <= m; dy++)
           for (let dx = -n; dx <= n; dx++) {
             const px = ox + (col + dx) * cw - x, py = oy + (row + dy) * ch - y;
-            const d = Math.hypot(px, py);
-            const edge = 1 - Math.abs(d - r) / (cw * 0.9);
+            const dist = Math.hypot(px, py);
+            const edge = 1 - Math.abs(dist - r) / (cw * 0.9);
             if (edge <= 0) continue;
-            const lit = 0.55 + 0.3 * Math.max(0, (-px - py) / (d || 1));
-            put(col + dx, row + dy, edge * lit * fade);
+            put(col + dx, row + dy, edge * (0.55 + 0.3 * Math.max(0, (-px - py) / (dist || 1))) * fade);
           }
       }
       ctx.clearRect(0, 0, P.width, P.height);
       for (const [k, v] of cells) {
         const c = RAMP[Math.min(RAMP.length - 1, Math.round(v * (RAMP.length - 1)))];
         if (c === ' ') continue;
-        const cx = k % 4096, cy = Math.floor(k / 4096);
         ctx.globalAlpha = Math.min(1, 0.35 + v);
-        ctx.fillText(c, ox + cx * cw, oy + cy * ch);
+        ctx.fillText(c, ox + ((k % 4096) - 1024) * cw, oy + (Math.floor(k / 4096) - 1024) * ch);
       }
-      requestAnimationFrame(frame);
+      raf = requestAnimationFrame(draw);
     };
-    requestAnimationFrame(frame);
+    return {
+      feed(now, d, box) {
+        const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+        if (last) owed += (d - depth) * PER_PX_CAMERA + (prev ? Math.hypot(cx - prev.x, cy - prev.y) * PER_PX_BOX : 0);
+        depth = d;
+        last = now;
+        prev = { x: cx, y: cy };
+        for (; owed >= 1; owed--) spawn(now, box);
+        cancelAnimationFrame(raf);
+        draw(now);
+      },
+      stop() {
+        fed = false; // the camera is still now: what is out plays out
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(draw);
+      },
+    };
   }
   function endDive(): void {
     if (!fly) return;
@@ -1237,6 +1258,7 @@ function createPane(id: string): PaneView {
     composerwrap.style.transform = '';
     el.classList.remove('dive'); // the chat shows, its bubble exactly where the middle box ends
     f.layer.remove();
+    f.bubbles.stop();
     if (f.scene) diveSceneEnd();
   }
   function clearPicFor(): void {
