@@ -1109,7 +1109,8 @@ function createPane(id: string): PaneView {
     m.top = `${y - P.top}px`;
     m.width = `${w}px`;
     m.height = `${h}px`;
-    f.bubbles.feed(now, d, { x: x - P.left, y: y - P.top, w, h });
+    const R = composer.getBoundingClientRect(); // the Reply box, rising from below
+    f.bubbles.feed(now, d, [{ x: x - P.left, y: y - P.top, w, h }, { x: R.left - P.left, y: R.top - P.top, w: R.width, h: R.height }]);
     m.borderRadius = `${lerp(f.radius, tcs ? parseFloat(tcs.borderTopLeftRadius) : f.radius, q)}px`;
     m.background = `color-mix(in srgb, var(--user-bubble) ${(q * 100).toFixed(2)}%, var(--input-bg))`;
     // the frame (1 px ring) and the soft shadow thin out: a bubble has neither; the box itself never fades
@@ -1144,12 +1145,14 @@ function createPane(id: string): PaneView {
   /** ASCII bubbles in the water of the dive, drawn in the jellyfish's own character grid: the video is ASCII
    *  art in cells of JELLY_CELL video pixels, shown with object-fit: cover, so one cell on screen is that times
    *  the video's scale, and the grid starts where the video's does. The dive feeds them every frame
-   *  (feed: the camera's depth d and the middle box's rect in the pane): they come off the box's edges, as
+   *  (feed: the camera's depth d and the rects in the pane of the middle box and the Reply box): they come off
+   *  each box's edges while it shows, as
    *  many as the box moves through the water (the camera going down, the box travelling to its bubble), and
    *  stay where they were in the water, so on screen they go up at the camera's speed, plus their own rise.
    *  Each is a circle sampled per cell into the video's brightness ramp (small ones one 'o' or '.'), in the
    *  accent. They play out after the dive, the camera still. */
-  type Bubbles = { feed(now: number, d: number, box: { x: number; y: number; w: number; h: number }): void; stop(): void };
+  type Rect = { x: number; y: number; w: number; h: number };
+  type Bubbles = { feed(now: number, d: number, boxes: Rect[]): void; stop(): void };
   function diveBubbles(P: DOMRect): Bubbles {
     const E = JELLY_EDGES;
     const jl = byId('jelly');
@@ -1176,8 +1179,9 @@ function createPane(id: string): PaneView {
     // wx, wy: where it is in the water (screen y + camera depth at birth); it rises on its own from there
     type B = { wx: number; wy: number; r: number; buoy: number; sway: number; phase: number; born: number; life: number };
     const bubbles: B[] = [];
-    let depth = 0, last = 0, prev: { x: number; y: number } | null = null, owed = 0, fed = true, raf = 0;
-    const spawn = (now: number, box: { x: number; y: number; w: number; h: number }) => {
+    let depth = 0, last = 0, fed = true, raf = 0;
+    const prev: ({ x: number; y: number } | null)[] = [], owed: number[] = [];
+    const spawn = (now: number, box: Rect) => {
       // mostly off the top edge (the box sinks, the water goes past it upward), some off the sides
       const side = Math.random();
       const x = side < 0.7 ? box.x + Math.random() * box.w : side < 0.85 ? box.x - cw * Math.random() : box.x + box.w + cw * Math.random();
@@ -1233,13 +1237,17 @@ function createPane(id: string): PaneView {
       raf = requestAnimationFrame(draw);
     };
     return {
-      feed(now, d, box) {
-        const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
-        if (last) owed += (d - depth) * PER_PX_CAMERA + (prev ? Math.hypot(cx - prev.x, cy - prev.y) * PER_PX_BOX : 0);
+      feed(now, d, boxes) {
+        boxes.forEach((box, i) => {
+          // only while it shows: the Reply box waits below the pane until it rises
+          const shows = box.y < P.height && box.y + box.h > 0;
+          const cx = box.x + box.w / 2, cy = box.y + box.h / 2, p = prev[i];
+          if (last && shows) owed[i] = (owed[i] ?? 0) + (d - depth) * PER_PX_CAMERA + (p ? Math.hypot(cx - p.x, cy - p.y) * PER_PX_BOX : 0);
+          prev[i] = { x: cx, y: cy };
+          for (; (owed[i] ?? 0) >= 1; owed[i]--) spawn(now, box);
+        });
         depth = d;
         last = now;
-        prev = { x: cx, y: cy };
-        for (; owed >= 1; owed--) spawn(now, box);
         cancelAnimationFrame(raf);
         draw(now);
       },
