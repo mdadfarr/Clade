@@ -1170,10 +1170,11 @@ function createPane(id: string): PaneView {
     ctx.scale(dpr, dpr);
     const family = 'Menlo, Monaco, "DejaVu Sans Mono", monospace';
     ctx.font = `100px ${family}`;
-    ctx.font = `${(cw * 100) / ctx.measureText('o').width}px ${family}`; // one glyph advance = one cell
+    ctx.font = `bold ${(cw * 100) / ctx.measureText('o').width}px ${family}`; // one glyph advance = one cell
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
-    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#C6623F';
+    ctx.fillStyle = ctx.shadowColor = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#C6623F';
+    ctx.shadowBlur = cw * 1.2; // a soft glow around each character, so the small grid still reads
     const RAMP = ' .:;otX%#@';
     const PER_PX_CAMERA = 0.035, PER_PX_BOX = 0.03; // bubbles per px the box moves through the water
     // wx, wy: where it is in the water (screen y + camera depth at birth); it rises on its own from there
@@ -1213,7 +1214,7 @@ function createPane(id: string): PaneView {
         const fade = Math.min(1, p * 8) * Math.min(1, (1 - p) * 3);
         const col = Math.round((x - ox) / cw), row = Math.round((y - oy) / ch);
         if (r < cw * 0.45) {
-          put(col, row, (r < cw * 0.3 ? 0.15 : 0.45) * fade); // '.' or 'o'
+          put(col, row, (r < cw * 0.25 ? 0.3 : 0.5) * fade); // '.' or 'o'
           continue;
         }
         // a ring: each cell's distance to the circle's edge, brighter on the upper left like a highlight
@@ -1224,14 +1225,14 @@ function createPane(id: string): PaneView {
             const dist = Math.hypot(px, py);
             const edge = 1 - Math.abs(dist - r) / (cw * 0.9);
             if (edge <= 0) continue;
-            put(col + dx, row + dy, edge * (0.55 + 0.3 * Math.max(0, (-px - py) / (dist || 1))) * fade);
+            put(col + dx, row + dy, Math.min(1, edge * (0.8 + 0.4 * Math.max(0, (-px - py) / (dist || 1)))) * fade);
           }
       }
       ctx.clearRect(0, 0, P.width, P.height);
       for (const [k, v] of cells) {
         const c = RAMP[Math.min(RAMP.length - 1, Math.round(v * (RAMP.length - 1)))];
         if (c === ' ') continue;
-        ctx.globalAlpha = Math.min(1, 0.35 + v);
+        ctx.globalAlpha = Math.min(1, 0.7 + v); // the character's shape carries the brightness; it is never faint
         ctx.fillText(c, ox + ((k % 4096) - 1024) * cw, oy + (Math.floor(k / 4096) - 1024) * ch);
       }
       raf = requestAnimationFrame(draw);
@@ -1811,7 +1812,7 @@ function drawGraph(): void {
   const root = svg(gsvg, 'g', { transform: `translate(${view.tx} ${view.ty}) scale(${view.s})` });
   const lines = svg(root, 'g', {});
   const boxes = svg(root, 'g', {});
-  if (trees.length > 1 && view.s > 0.2)
+  if (trees.length > 1)
     for (const t of trees) svg(root, 'text', { x: t.x * COLW, y: -16, class: 'gtree' }).textContent = t.title.length > 40 ? t.title.slice(0, 39) + '…' : t.title;
   for (const n of graph.nodes) {
     const p = at(n);
@@ -1829,7 +1830,7 @@ function drawGraph(): void {
     if (!seen(p.x, p.y, p.x + NW, p.y + NH)) continue;
     const g = svg(boxes, 'g', { class: 'gnode' + (n.id === graph.current ? ' current' : paneSpots.has(n.id) ? ' here' : ''), 'data-node': n.id });
     svg(g, 'rect', { x: p.x, y: p.y, width: NW, height: NH, rx: 7 });
-    if (view.s > 0.35) svg(g, 'text', { x: p.x + 10, y: p.y + 17 }).textContent = shortLabel(n.label || '…');
+    svg(g, 'text', { x: p.x + 10, y: p.y + 17 }).textContent = shortLabel(n.label || '…');
   }
 }
 
@@ -1840,6 +1841,45 @@ function centerOn(nid: string | null): void {
   const p = n ? at(n) : { x: 0, y: 0 };
   view.tx = gsvg.clientWidth / 2 - (p.x + NW / 2) * view.s;
   view.ty = gsvg.clientHeight / 2 - (p.y + NH / 2) * view.s;
+}
+
+/** The view that shows as much of the graph as fits: every tree if it fits at zoom 1 or less (with a margin),
+ *  else the closest zoom out (ZOOM_MIN) around the current reply, kept inside the graph's bounds. */
+function overview(): { s: number; tx: number; ty: number } {
+  const W = gsvg.clientWidth, H = gsvg.clientHeight, M = 48;
+  if (!graph.nodes.length) return { s: 1, tx: W / 2, ty: H / 2 };
+  const ps = graph.nodes.map(at);
+  const x0 = Math.min(...ps.map((p) => p.x)), x1 = Math.max(...ps.map((p) => p.x)) + NW;
+  const y0 = Math.min(...ps.map((p) => p.y)) - (trees.length > 1 ? 32 : 0), y1 = Math.max(...ps.map((p) => p.y)) + NH; // tree titles above
+  const s = Math.min(1, Math.max(ZOOM_MIN, Math.min((W - 2 * M) / (x1 - x0), (H - 2 * M) / (y1 - y0))));
+  const n = (graph.current && byNode.get(graph.current)) || graph.nodes[graph.nodes.length - 1];
+  const p = at(n);
+  // the middle: the graph's, or the current reply's if the graph is wider or taller than the view
+  const mid = (lo: number, hi: number, at: number, half: number) => (hi - lo <= 2 * half ? (lo + hi) / 2 : Math.min(hi - half, Math.max(lo + half, at)));
+  const cx = mid(x0, x1, p.x + NW / 2, (W / 2 - M) / s), cy = mid(y0, y1, p.y + NH / 2, (H / 2 - M) / s);
+  return { s, tx: W / 2 - cx * s, ty: H / 2 - cy * s };
+}
+
+/** Glide the graph view to `to` (zoom on a log scale, the middle point straight), the graph showing as much
+ *  as the zoom says (it may start part way into a chat). */
+function glideView(to: { s: number; tx: number; ty: number }, ms = 420): void {
+  stopAnim();
+  const W = gsvg.clientWidth, H = gsvg.clientHeight;
+  const s0 = view.s, c0 = { x: (W / 2 - view.tx) / s0, y: (H / 2 - view.ty) / s0 };
+  const c1 = { x: (W / 2 - to.tx) / to.s, y: (H / 2 - to.ty) / to.s };
+  const t0 = performance.now();
+  const step = (now: number) => {
+    const u = Math.min(1, (now - t0) / ms);
+    const e = 1 - Math.pow(1 - u, 3);
+    const s = s0 * Math.pow(to.s / s0, e);
+    view.s = s;
+    view.tx = W / 2 - (c0.x + (c1.x - c0.x) * e) * s;
+    view.ty = H / 2 - (c0.y + (c1.y - c0.y) * e) * s;
+    setShown(graphShown(s, ENTER_S, fillS()));
+    drawSoon();
+    anim = u < 1 ? requestAnimationFrame(step) : 0;
+  };
+  anim = requestAnimationFrame(step);
 }
 
 const centerEl = byId('center');
@@ -2008,6 +2048,7 @@ function zoomGraph(e: WheelEvent): void {
 // was on screen when the move started; it slides to the middle as it grows. fromChat: started by a
 // pinch out of the chat that shows this reply, so ending in the chat just closes the graph.
 let trip: { node: GNode; fx: number; fy: number; fromChat: boolean; other: boolean } | null = null;
+let outOfChat = false; // the pinch now going on came out of a chat: when it stops, the graph glides to its overview
 let pinchEnd: number | undefined;
 let anim = 0;
 // The chat end of a move: the reply's box at twice the graph's closest zoom (or filling the window, if
@@ -2071,10 +2112,22 @@ function animateTrip(to: number, done: () => void): void {
 
 /** The fingers stopped: finish the move to the nearer end. */
 function settleTrip(): void {
-  if (!trip) return;
+  if (!trip) {
+    // a pinch out of a chat that went all the way into the graph: on to the overview, unless already further out
+    const ov = overview();
+    if (outOfChat && view.s > ov.s * 1.02) glideView(ov);
+    outOfChat = false;
+    return;
+  }
   if (settleTo(graphShown(view.s, ENTER_S, fillS())) === 'chat') return animateTrip(fillS(), landInChat);
-  // back to the graph: out of the chat it frames the whole neighbourhood (zoom 1), else where the move began
-  animateTrip(Math.min(view.s, trip.fromChat ? 1 : ENTER_S), () => {
+  if (trip.fromChat) {
+    // back to the graph out of the chat: on to the overview (most of the tree)
+    trip = null;
+    outOfChat = false;
+    return glideView(overview());
+  }
+  // back to the graph, where the move began
+  animateTrip(Math.min(view.s, ENTER_S), () => {
     trip = null;
     setShown(1);
     drawSoon();
@@ -2099,6 +2152,7 @@ function onPinch(e: WheelEvent): void {
     if (s >= fillS()) return landInChat();
     placeTrip(s);
     if (graphShown(s, ENTER_S, fillS()) >= 1) {
+      outOfChat = trip.fromChat;
       trip = null; // fully in the graph: from here a pinch zooms it around the fingers
       setShown(1);
     }
