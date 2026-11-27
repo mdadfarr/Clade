@@ -28,7 +28,7 @@ export interface Design {
   terminal: { fontSize: number };
   panels: Panel[];
   background?: Background; // optional; none = the theme's own background
-  look?: Look; // the accent last picked (optional; default: Clay #D97757). The colors themselves are in `colors`.
+  look?: Look; // the accent last picked (optional; default: Claude #D97757). The colors themselves are in `colors`.
 }
 
 /** What is behind the app: a preset ('theme' = the theme's own color; 'claude' is from the glass trial,

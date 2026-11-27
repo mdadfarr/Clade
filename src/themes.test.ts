@@ -65,7 +65,7 @@ test('picking writes exactly the stored values and the accent name; nothing else
   assert.strictEqual(base.look?.accent, 'default'); // the input is not changed
 });
 
-test('the default design is the base surfaces with the default accent (Clay #D97757), and reset brings it back', () => {
+test('the default design is the base surfaces with the default accent (Claude #D97757), and reset brings it back', () => {
   assert.deepStrictEqual(DEFAULT_LOOK, { accent: 'default' });
   assert.deepStrictEqual([DEFAULT_DESIGN.colors.dark.accentFill, DEFAULT_DESIGN.colors.light.accentFill], ['#D97757', '#D97757']);
   assert.deepStrictEqual([DEFAULT_DESIGN.colors.dark.background, DEFAULT_DESIGN.colors.light.background], ['#191919', '#ffffff']);

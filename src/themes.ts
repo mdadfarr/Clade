@@ -1,4 +1,4 @@
-// The looks the user can pick: the default accent (Clay, #D97757) and 9 more on one set of surfaces, each a stored set of hand-set colors. Picking
+// The looks the user can pick: the default accent (Claude, #D97757) and 9 more on one set of surfaces, each a stored set of hand-set colors. Picking
 // copies the stored values into design.json; nothing is computed at pick time, so a bad color cannot be
 // chosen. Every combination is checked for contrast by themes.test.ts. Pure functions.
 import type { Design, Roles } from './design';
@@ -57,7 +57,7 @@ export const PAPER: { light: Surface; dark: Surface } = {
 };
 
 export const ACCENTS: Record<AccentName, AccentSet> = {
-  default: { label: 'Clay', fill: '#D97757', light: '#9D4D2C', dark: '#D97757', on: '#FFFFFF', send: '#C6623F' },
+  default: { label: 'Claude', fill: '#D97757', light: '#9D4D2C', dark: '#D97757', on: '#FFFFFF', send: '#C6623F' },
   cyan: { label: 'Cyan', fill: '#00E2E6', light: '#007071', dark: '#00E2E6', on: '#1d1c1a' },
   mint: { label: 'Mint', fill: '#5EDFA4', light: '#19714A', dark: '#5EDFA4', on: '#1d1c1a' },
   blue: { label: 'Blue', fill: '#6CB2FF', light: '#1F63B5', dark: '#7DB8FF', on: '#1d1c1a' },

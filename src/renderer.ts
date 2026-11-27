@@ -301,7 +301,8 @@ function artifactCard(parent: HTMLElement, name: string): void {
 
 // ---- the empty new-chat screen (one pane, nothing in it yet): the jellyfish video plays behind the chat
 // area and fades out with the first message (DESIGN.md section 3). One file, white jellyfish on black,
-// colored by the accent and blended onto the theme's background in app.css (#jelly). ----
+// colored by the accent and blended onto the theme's background in app.css (#jelly). A 6-second loop played
+// back to back (the <video loop> attribute). Not shown under a picture wallpaper. ----
 const JELLY = 'assets/jellyfish/clade-jellyfish-mono.mp4';
 let jellyOff = 0;
 function updateNewChat(): void {
@@ -312,6 +313,12 @@ function updateNewChat(): void {
   const box = byId('jelly');
   const video = box.querySelector('video') as HTMLVideoElement;
   clearTimeout(jellyOff);
+  if (!document.body.dataset.bg) return; // the design has not arrived yet: apply() calls this again
+  if (document.body.dataset.bg === 'picture') {
+    // a picture wallpaper: no jellyfish at all (app.css hides the layer), and the video stops at once
+    video.pause();
+    return;
+  }
   if (!on) {
     // fade out (app.css), then stop decoding
     jellyOff = window.setTimeout(() => video.pause(), 450);
@@ -433,7 +440,7 @@ function createPane(id: string): PaneView {
 
   /** A run of tool calls: one quiet line, "Worked on 3 steps"; a click lists the tool names. */
   function toolLine(parent: HTMLElement, names: string[], key: string): void {
-    const b = add(parent, 'button', 'tools' + (openTools.has(key) !== opts.toolsOpen ? ' open' : '')); // the setting flips the default
+    const b = add(parent, 'button', 'tools' + (openTools.has(key) ? ' open' : '')); // always folded at first, whatever settings.json says
     icon(b, CHEVRON, 11, 1.6);
     add(b, 'span', 'count').textContent = names.length === 1 ? 'Worked on 1 step' : `Worked on ${names.length} steps`;
     add(b, 'span', 'names').textContent = names.join(', ');
@@ -1768,20 +1775,106 @@ interface Looks {
 }
 let looks: Looks | null = null;
 
-/** The Accent row (Settings, and the sidebar menu's flyout). A click sends only a stored name. */
+// ---- the bounce: a row of options (the accent bar, the theme switch) where the hovered or focused option
+// stretches with a spring, goes a little past its size, then settles, while the others shrink to make room.
+// Widths are flex-grow shares, so the row's own size never changes. Hovering only animates: a click applies.
+interface Bounce { ids: string[]; wide: number; hover: string; w: number[]; v: number[]; raf: number; last: number }
+const bounces: Record<string, Bounce> = {};
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+function bounceTick(group: string, t: number): void {
+  const s = bounces[group];
+  const dt = Math.min(0.032, s.last ? (t - s.last) / 1000 : 0.016);
+  s.last = t;
+  const k = 320; // spring stiffness; damping below 2*sqrt(k) overshoots a little, then settles
+  const c = reducedMotion.matches ? 2 * Math.sqrt(k) : 25; // reduced motion: critically damped, no bounce
+  let moving = false;
+  s.ids.forEach((id, i) => {
+    const target = s.hover === id ? s.wide : 1;
+    s.v[i] += (k * (target - s.w[i]) - c * s.v[i]) * dt;
+    s.w[i] = Math.max(0.05, s.w[i] + s.v[i] * dt);
+    if (Math.abs(target - s.w[i]) > 0.002 || Math.abs(s.v[i]) > 0.002) moving = true;
+    else (s.w[i] = target), (s.v[i] = 0);
+  });
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[data-bounce="${group}"]`)))
+    el.querySelectorAll<HTMLElement>('[data-bid]').forEach((b) => (b.style.flexGrow = s.w[s.ids.indexOf(b.dataset.bid!)].toFixed(4)));
+  s.raf = moving ? requestAnimationFrame((t2) => bounceTick(group, t2)) : 0;
+  if (!moving) s.last = 0;
+}
+function bounceHover(group: string, id: string): void {
+  const s = bounces[group];
+  if (!s || id === s.hover) return;
+  s.hover = id;
+  if (!s.raf) s.raf = requestAnimationFrame((t) => bounceTick(group, t));
+}
+/** Every row back to equal widths (the pointer left, or Settings or the menu closed). */
+function bounceReset(): void {
+  for (const g of Object.keys(bounces)) bounceHover(g, '');
+}
+// The pointer can leave a row that a redraw just replaced (no pointerleave then): a move outside the row ends its hover.
+document.addEventListener('pointermove', (e) => {
+  for (const [g, s] of Object.entries(bounces))
+    if (s.hover && !(e.target instanceof Element && e.target.closest(`[data-bounce="${g}"]`))) bounceHover(g, '');
+}, true);
+/** Makes `el` a bounce row: its children with data-bid are the options. A redraw keeps the widths reached. */
+function wireBounce(el: HTMLElement, group: string, ids: string[], wide: number): void {
+  const s = (bounces[group] ??= { ids, wide, hover: '', w: ids.map(() => 1), v: ids.map(() => 0), raf: 0, last: 0 });
+  el.dataset.bounce = group;
+  for (const b of Array.from(el.querySelectorAll<HTMLElement>('[data-bid]'))) {
+    const id = b.dataset.bid!;
+    b.style.flexGrow = s.w[ids.indexOf(id)].toFixed(4);
+    b.addEventListener('focus', () => bounceHover(group, id));
+    b.addEventListener('blur', (e) => {
+      if (!(e.relatedTarget instanceof Element && el.contains(e.relatedTarget))) bounceHover(group, '');
+    });
+  }
+  // The option under the pointer, read only when the pointer moves (never because the widths moved under it).
+  el.addEventListener('pointermove', (e) => {
+    const b = e.target instanceof Element ? e.target.closest<HTMLElement>('[data-bid]') : null;
+    if (b) bounceHover(group, b.dataset.bid!);
+  });
+  el.addEventListener('pointerleave', () => bounceHover(group, ''));
+}
+
+/** The Accent row (Settings, and the sidebar menu's flyout): one bar of 10 color blocks. A click sends only
+ * a stored name. */
+const BAR_ORDER = ['red', 'default', 'coral', 'amber', 'green', 'mint', 'cyan', 'blue', 'violet', 'pink'];
 function drawLookRows(row: (title: string, hint: string) => HTMLElement): void {
   if (!looks) return;
   const now = looks.now;
   const custom = now === 'custom';
   const ar = row('Accent', custom ? 'Custom: design.json was edited by hand' : '');
-  const dots = add(ar, 'div', 'lookdots');
-  for (const a of looks.accents) {
-    const b = add(dots, 'button', 'lookdot' + (!custom && now.accent === a.id ? ' on' : '')) as HTMLButtonElement;
-    b.style.background = a.fill;
+  const el = add(ar, 'div', 'accbar');
+  el.setAttribute('role', 'group');
+  el.setAttribute('aria-label', 'Accent');
+  const ids: string[] = [];
+  for (const id of BAR_ORDER) {
+    const a = looks.accents.find((x) => x.id === id);
+    if (!a) continue;
+    ids.push(id);
+    const b = add(el, 'button', 'accblock') as HTMLButtonElement;
+    b.dataset.bid = id;
+    b.style.background = themeNow === 'dark' ? a.fill : a.fillLight;
     b.title = a.label;
     b.setAttribute('aria-label', `Accent ${a.label}`);
-    b.addEventListener('click', () => api.designSet({ look: { accent: a.id } }));
+    b.setAttribute('aria-pressed', String(!custom && now.accent === id));
+    b.addEventListener('click', () => api.designSet({ look: { accent: id } }));
   }
+  wireBounce(el, 'accent', ids, 4);
+}
+
+/** System / Light / Dark (Settings, and the sidebar menu's flyout), with the same bounce. A click applies. */
+const THEME_IDS = ['system', 'light', 'dark'];
+function drawThemeSwitch(parent: HTMLElement, labels: string[]): void {
+  const s = add(parent, 'div', 'seg themeseg');
+  const current = designNow?.theme ?? 'system';
+  THEME_IDS.forEach((tid, i) => {
+    const b = add(s, 'button', tid === current ? 'on' : '');
+    b.dataset.bid = tid;
+    b.textContent = labels[i];
+    b.setAttribute('aria-pressed', String(tid === current));
+    b.addEventListener('click', () => api.designSet({ theme: tid }));
+  });
+  wireBounce(s, 'theme', THEME_IDS, 1.4);
 }
 
 /** Background: two color swatches (Ivory, Dark; each sets the theme too) and a picture of
@@ -1842,22 +1935,17 @@ function drawSettings(): void {
     const b = add(r, 'button', 'switch' + (on ? ' on' : ''));
     b.addEventListener('click', () => click(!on));
   };
-  const pid = fp()?.id ?? '';
   const ap = row('Appearance', '');
-  seg(ap, [['system', 'System'], ['light', 'Ivory'], ['dark', 'Dark']], designNow?.theme ?? 'system', (theme) => api.designSet({ theme }));
+  drawThemeSwitch(ap, ['System', 'Ivory', 'Dark']);
   const rl = add(ap, 'button', 'setlink');
   rl.textContent = 'Reset to default';
-  rl.title = 'Default accent (Clay), System. Sizes, fonts and panels stay as they are.';
+  rl.title = 'Default accent (Claude), System. Sizes, fonts and panels stay as they are.';
   rl.addEventListener('click', () => api.designSet({ resetLook: true }));
   drawLookRows(row);
   drawBackgroundRow(row);
   const zoom = row('Text size', 'Cmd+Plus, Cmd+Minus, Cmd+0');
   seg(zoom, [['-1', '−'], ['0', `${Math.round(opts.zoom * 100)}%`], ['1', '+']], '', (d) => api.zoom(+d));
-  const busyHint = busy() ? ' Wait until Claude has finished to change these.' : '';
-  select(row('Model', 'For new chats and the focused pane.' + busyHint), MODEL_NAMES.some(([mid]) => mid === opts.model) ? MODEL_NAMES : [...MODEL_NAMES, [opts.model, opts.model]], opts.model, (model) => api.setOptions(pid, { model }));
-  select(row('Thinking', "Claude Code's effort level."), EFFORT_NAMES, opts.effort, (effort) => api.setOptions(pid, { effort }));
   select(row('Mode', 'What new chats start in.'), [['', 'Default'], ...MODE_NAMES.map(([mid, label]) => [mid, label] as [string, string])], opts.mode, (mode) => api.setOptions('', { mode }));
-  toggle(row('Show tool steps unfolded', ''), opts.toolsOpen, (toolsOpen) => api.setOptions('', { toolsOpen }));
   toggle(row('Show account name', 'The email in the chat list'), opts.showAccount !== false, (showAccount) => api.setOptions('', { showAccount }));
   toggle(row('Big titles', 'Large title with a soft glow under the cursor'), designNow?.effects?.enabled ?? true, (effects) => api.designSet({ effects }));
   toggle(row('Chat list', ''), designNow?.layout?.sidebar ?? true, (sidebar) => api.designSet({ sidebar }));
@@ -1868,7 +1956,6 @@ function drawSettings(): void {
     b.addEventListener('click', click);
   };
   btn('Change folder…', () => api.changeFolder());
-  btn('Show in Finder', () => api.openFolder());
   btn('Reset design', () => api.resetDesign());
   btn('Done', () => openSettings(false));
   // Not built yet, said plainly so nobody looks for it.
@@ -1878,6 +1965,7 @@ function drawSettings(): void {
 }
 let sheetKind: 'settings' | 'help' = 'settings';
 function openSettings(on: boolean): void {
+  bounceReset();
   sheetKind = 'settings';
   byId('settings').hidden = !on;
   if (on) drawSettings();
@@ -1886,6 +1974,7 @@ function openSettings(on: boolean): void {
 
 // ---- help: help.md shipped with the app, drawn by the reply renderer (same tags and blocks) ----
 function openHelp(): void {
+  bounceReset();
   sheetKind = 'help';
   const sheet = byId('sheet');
   sheet.replaceChildren();
@@ -1926,6 +2015,7 @@ api.onAccount((a) => {
 });
 let flyOpen = false; // the Appearance flyout, kept open while picks redraw the menu
 function closeAccountMenu(): void {
+  bounceReset();
   flyOpen = false;
   byId('acctmenu').hidden = true;
   byId('acct').setAttribute('aria-expanded', 'false');
@@ -1960,12 +2050,7 @@ function drawAccountMenu(): void {
   fly.hidden = !flyOpen;
   const fr = add(fly, 'div', 'flyrow');
   add(fr, 'span', 'flytitle').textContent = 'Appearance';
-  const fs = add(fr, 'div', 'seg');
-  for (const [tid, label] of [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]) {
-    const b = add(fs, 'button', tid === (designNow?.theme ?? 'system') ? 'on' : '');
-    b.textContent = label;
-    b.addEventListener('click', () => api.designSet({ theme: tid }));
-  }
+  drawThemeSwitch(fr, ['System', 'Light', 'Dark']);
   const flyRow = (title: string, hint: string) => {
     const r = add(fly, 'div', 'flyrow');
     const t = add(r, 'span', 'flytitle');

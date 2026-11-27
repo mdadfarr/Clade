@@ -14,7 +14,7 @@ const bad = (change: (d: any) => void, pattern: RegExp) => {
 
 test('v3: default design is valid', () => assert.deepStrictEqual(parseDesign(JSON.stringify(DEFAULT_DESIGN)), DEFAULT_DESIGN));
 
-test('v3: the default accent is Clay #D97757 in both themes; as text on Ivory it is a darker shade', () => {
+test('v3: the default accent is Claude #D97757 in both themes; as text on Ivory it is a darker shade', () => {
   const c = DEFAULT_DESIGN.colors;
   assert.deepStrictEqual(c.tones.accent, { light: '#9D4D2C', dark: '#D97757' });
   assert.deepStrictEqual([c.light.accentFill, c.dark.accentFill], ['#D97757', '#D97757']);
