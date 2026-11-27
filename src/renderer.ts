@@ -300,14 +300,16 @@ function artifactCard(parent: HTMLElement, name: string): void {
 }
 
 // ---- the empty new-chat screen (one pane, nothing in it yet): the jellyfish video plays behind the chat
-// area and fades out with the first message (DESIGN.md section 3). One file, white jellyfish on black,
+// area; the first message dives past it (diveScene below). One file, white jellyfish on black,
 // colored by the accent and blended onto the theme's background in app.css (#jelly). A 6-second loop played
 // back to back (the <video loop> attribute). Not shown under a picture wallpaper. ----
 const JELLY = 'assets/jellyfish/clade-jellyfish-mono.mp4';
 let jellyOff = 0;
 function updateNewChat(): void {
   const v = fp();
-  const on = document.body.classList.contains('multi') ? false : !!v?.el.classList.contains('empty');
+  const multi = document.body.classList.contains('multi');
+  if (multi) document.body.classList.remove('picgone'); // the picture is everyone's again
+  const on = multi ? false : !!v?.el.classList.contains('empty');
   document.body.classList.toggle('newchat', on);
   byId('newchat').classList.toggle('active', on);
   const box = byId('jelly');
@@ -319,6 +321,7 @@ function updateNewChat(): void {
     video.pause();
     return;
   }
+  if (!on && document.body.classList.contains('diving')) return; // the dive moves it away, then stops it
   if (!on) {
     // fade out (app.css), then stop decoding
     jellyOff = window.setTimeout(() => video.pause(), 450);
@@ -335,6 +338,45 @@ function updateNewChat(): void {
   const video = box.querySelector('video') as HTMLVideoElement;
   video.addEventListener('playing', () => box.classList.add('ready'));
 })();
+
+// ---- the dive: the first message of a new chat. In one smooth motion (DIVE_MS, eased in and out) the
+// scene behind (the jellyfish, or a picture wallpaper) slides up and off like a camera sinking past it, the
+// message box moves and reshapes into its place at the bottom, and the sent text flies into its bubble
+// (createPane: startDive). The scene exists only in single-pane mode. ----
+const DIVE_MS = 800;
+const diveEase = (t: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, t)));
+const lerp = (a: number, b: number, p: number) => a + (b - a) * p;
+/** Starts the scene's part; false when there is none (split panes). */
+function diveSceneStart(): boolean {
+  if (document.body.classList.contains('multi')) return false;
+  if (document.body.dataset.bg === 'picture') {
+    // the picture leaves on a copy of itself; under it the page is the plain chat background
+    const pic = document.createElement('div');
+    pic.id = 'picslide';
+    document.body.appendChild(pic);
+    document.body.classList.add('picgone');
+  } else document.body.classList.add('diving'); // the jellyfish stays shown and playing (updateNewChat)
+  return true;
+}
+/** p: 0 (where it was) to 1 (off the top). */
+function diveSceneFrame(p: number): void {
+  const jelly = byId('jelly');
+  if (document.body.classList.contains('diving')) jelly.style.transform = `translateY(${-p * jelly.offsetHeight}px)`;
+  const pic = document.getElementById('picslide');
+  if (pic) pic.style.transform = `translateY(${-p * window.innerHeight}px)`;
+}
+function diveSceneEnd(): void {
+  document.getElementById('picslide')?.remove();
+  const jelly = byId('jelly');
+  if (!document.body.classList.contains('diving')) return;
+  // off screen now: hide it at once (no fade back in place), put it back, stop the video
+  jelly.classList.add('instant');
+  document.body.classList.remove('diving');
+  jelly.style.transform = '';
+  void jelly.offsetWidth;
+  jelly.classList.remove('instant');
+  (jelly.querySelector('video') as HTMLVideoElement).pause();
+}
 
 // =====================================================================================================
 // One pane. Everything a chat needs lives in here, so panes never share state: each has its own chat,
@@ -367,6 +409,8 @@ function createPane(id: string): PaneView {
   let sent = false; // the user just pressed Enter and the session file has not caught up yet
   let stick = true; // keep the newest message in view unless the user scrolled up
   const isBusy = () => sent || chat.working;
+  let fly: { raf: number; t0: number; pane: DOMRect; w0: number; box: DOMRect; text: DOMRect; scroll: number; scene: boolean; layer: HTMLElement; ghost: HTMLElement; inner: HTMLElement; src: Element | null; hello: HTMLElement | null; helloTop: number; helloDx: number } | null = null;
+  let picFor: string | null = null; // the chat the picture wallpaper dived away for ('' = its session is not known yet)
 
   // ---- its terminal: hidden by default (off-screen at a real size); Cmd+J shows the focused pane's ----
   const term = new Terminal({ fontFamily: 'Menlo, monospace' });
@@ -497,6 +541,9 @@ function createPane(id: string): PaneView {
     updateRail();
     // The empty new-chat screen: heading and box in the middle, jellyfish behind (app.css .pane.empty).
     const empty = !chat.items.length && !pending && !isBusy();
+    if (empty && fly) endDive();
+    if (empty && picFor !== null) clearPicFor();
+    if (fly) itemsEl.querySelector('.userwrap .user')?.classList.add('flyhide'); // the flying copy stands for it
     el.classList.toggle('empty', empty);
     input.placeholder = empty ? 'How can I help?' : 'Ask a follow-up…';
     updateNewChat();
@@ -865,6 +912,7 @@ function createPane(id: string): PaneView {
   function sendInput(): void {
     if (!input.value.trim() && !chips.length && !quotes.length) return;
     if (isBusy()) return note('Claude is still working in this pane. Send this when it has finished, or press Stop.', 6000);
+    const dive = el.classList.contains('empty') && !fly ? measureDive() : null; // before anything is cleared
     // attachments go as paths only; Claude Code reads the files. Quotes go first, as "> " lines.
     lastSent = (quotes.map((k) => quoteText(k.text)).join('') + buildMessage(input.value, chips)).trim();
     quotes = [];
@@ -878,8 +926,124 @@ function createPane(id: string): PaneView {
     sent = true;
     stick = true;
     renderChat();
+    if (dive) {
+      // renderChat scrolled while the new-chat layout was still up; the chat area is shorter now: to the end again
+      messages.scrollTop = messages.scrollHeight;
+      startDive(dive);
+    }
   }
   input.addEventListener('input', growInput);
+
+  // ---- the dive (see diveSceneStart): measured from the real layout every time, never from fixed sizes ----
+  type DiveStart = { box: DOMRect; text: DOMRect; scroll: number; hello: HTMLElement | null; helloRect: DOMRect | null; scene: boolean };
+  function measureDive(): DiveStart {
+    const box = composer.getBoundingClientRect();
+    // the typed content: from the first thing in the box (a quote, attachments or the text) to the text's end
+    const first = [q('.quotebox'), q('.chips'), input].find((e) => e.offsetHeight > 0) ?? input;
+    const ir = input.getBoundingClientRect();
+    const top = first.getBoundingClientRect().top;
+    const text = new DOMRect(ir.left, top, ir.width, ir.bottom - top);
+    const h = q('.hello');
+    const scene = diveSceneStart(); // before the layout changes, so the jellyfish never starts to fade
+    return { box, text, scroll: input.scrollTop, hello: h.offsetHeight ? (h.cloneNode(true) as HTMLElement) : null, helloRect: h.offsetHeight ? h.getBoundingClientRect() : null, scene };
+  }
+  function startDive(d: DiveStart): void {
+    if (reducedMotion.matches) {
+      // no movement: straight to the end
+      if (d.scene) {
+        diveSceneEnd();
+        if (document.body.classList.contains('picgone')) picFor = chat.session;
+      }
+      return;
+    }
+    if (d.scene && document.body.classList.contains('picgone')) picFor = chat.session; // '' until the new chat's file names it
+    const layer = add(el, 'div', 'flylayer');
+    const ghost = add(layer, 'div', 'flyghost');
+    const inner = add(ghost, 'div', 'user flyinner');
+    let hello: HTMLElement | null = null;
+    const P = el.getBoundingClientRect();
+    if (d.hello && d.helloRect) {
+      hello = add(add(el, 'div', 'flylayer hellolayer'), 'div', 'flyhello');
+      hello.textContent = d.hello.textContent;
+      hello.style.width = `${d.helloRect.width}px`;
+    }
+    fly = { raf: 0, t0: performance.now(), pane: P, w0: 0, box: d.box, text: d.text, scroll: d.scroll, scene: d.scene, layer, ghost, inner, src: null, hello, helloTop: d.helloRect ? d.helloRect.top - P.top : 0, helloDx: d.helloRect ? d.helloRect.left - (P.left + P.width / 2) : 0 };
+    itemsEl.querySelector('.userwrap .user')?.classList.add('flyhide');
+    diveFrame(fly.t0); // the first frame is drawn now, before the new layout is ever painted
+  }
+  function diveFrame(now: number): void {
+    if (!fly) return;
+    const f = fly;
+    const t = (now - f.t0) / DIVE_MS;
+    if (t >= 1) return endDive();
+    const p = diveEase(t);
+    // the box: where it really sits now (styles lifted for the reading, in the same frame: never painted)
+    composer.classList.remove('morph');
+    composer.style.width = composer.style.height = composer.style.marginTop = composer.style.transform = '';
+    const end = composer.getBoundingClientRect();
+    // The start stays where it was within this pane: if the pane moves or changes size meanwhile (window,
+    // split, chat list), the start goes with it, horizontally from the pane's center, vertically in proportion.
+    const P = el.getBoundingClientRect();
+    if (!f.w0) f.w0 = end.width;
+    const k = end.width / f.w0; // the box's own width changed with the pane: starting widths follow
+    const sx = (r: DOMRect) => P.left + P.width / 2 + (r.left - (f.pane.left + f.pane.width / 2)) * k;
+    const sy = (r: DOMRect) => P.top + (r.top - f.pane.top) * (P.height / f.pane.height);
+    const w = lerp(f.box.width * k, end.width, p), h = lerp(f.box.height, end.height, p);
+    const x = lerp(sx(f.box), end.left, p), y = lerp(sy(f.box), end.top, p);
+    composer.classList.add('morph');
+    composer.style.setProperty('--morph-p', String(p));
+    composer.style.width = `${w}px`;
+    composer.style.height = `${h}px`;
+    composer.style.marginTop = `${end.height - h}px`; // the box takes its final room in the layout all along
+    composer.style.transform = `translate(${x - (end.left + (end.width - w) / 2)}px, ${y - (end.bottom - h)}px)`;
+    // the text: from where it was typed to its bubble, wherever that is now (scrolling, resizing, typing)
+    const M = messages.getBoundingClientRect();
+    f.layer.style.clipPath = `inset(${lerp(0, M.top - P.top, p)}px ${lerp(0, P.right - M.right, p)}px ${lerp(0, P.bottom - M.bottom, p)}px ${lerp(0, M.left - P.left, p)}px)`;
+    const target = itemsEl.querySelector('.userwrap .user');
+    if (target) {
+      if (target !== f.src) {
+        f.src = target;
+        f.inner.replaceChildren(...Array.from(target.childNodes).map((n) => n.cloneNode(true)));
+      }
+      const T = target.getBoundingClientRect();
+      const cs = getComputedStyle(target);
+      const g = f.ghost.style;
+      g.left = `${lerp(sx(f.text), T.left, p) - P.left}px`;
+      g.top = `${lerp(sy(f.text), T.top, p) - P.top}px`;
+      g.width = `${lerp(f.text.width * k, T.width, p)}px`;
+      g.height = `${lerp(f.text.height, T.height, p)}px`;
+      g.padding = `${lerp(0, parseFloat(cs.paddingTop), p)}px ${lerp(0, parseFloat(cs.paddingRight), p)}px`;
+      g.background = `color-mix(in srgb, var(--user-bubble) ${(p * 100).toFixed(2)}%, transparent)`;
+      f.inner.style.transform = `translateY(${-f.scroll * (1 - p)}px)`;
+    }
+    // the scene and the greeting go up together, the same distance
+    if (f.scene) diveSceneFrame(p);
+    if (f.hello) {
+      const dist = f.scene ? byId('jelly').offsetHeight || window.innerHeight : P.height; // as far as the jellyfish (or the picture) goes
+      f.hello.style.top = `${f.helloTop * (P.height / f.pane.height) - p * dist}px`;
+      f.hello.style.left = `${P.width / 2 + f.helloDx}px`;
+    }
+    f.raf = requestAnimationFrame(diveFrame);
+  }
+  function endDive(): void {
+    if (!fly) return;
+    const f = fly;
+    fly = null;
+    cancelAnimationFrame(f.raf);
+    composer.classList.remove('morph');
+    composer.style.width = composer.style.height = composer.style.marginTop = composer.style.transform = '';
+    composer.style.removeProperty('--morph-p');
+    itemsEl.querySelector('.flyhide')?.classList.remove('flyhide'); // the bubble shows where its copy ends
+    f.layer.remove();
+    f.hello?.parentElement?.remove();
+    if (f.scene) {
+      diveSceneEnd();
+    }
+  }
+  function clearPicFor(): void {
+    picFor = null;
+    document.body.classList.remove('picgone');
+  }
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Tab' && e.shiftKey) {
       e.preventDefault(); // Claude Code's own key for the next mode
@@ -1101,12 +1265,17 @@ function createPane(id: string): PaneView {
     busy: isBusy,
     onChat(c) {
       const switched = c.session !== chat.session;
+      const mine = !!pending && pendingInFile(c); // the file of the message just sent
       if (switched && chat.session) scrollPos.set(chat.session, stick ? -1 : messages.scrollTop);
       if (switched) editing = null;
       // Another chat opened in this pane (not the new one the message started): the bubble is not its.
       if (pending && (pendingInFile(c) || (switched && pending.session))) pending = null;
       chat = c;
       sent = false;
+      if (picFor !== null && c.session) {
+        if (!picFor && mine) picFor = c.session; // the new chat's id, once its file has the message
+        else if (picFor ? c.session !== picFor : userCount(c) > 0) clearPicFor(); // another chat opened here: the picture comes back
+      }
       if (switched) {
         const at = scrollPos.get(c.session) ?? -1;
         stick = at < 0 || !!wantReply;
@@ -1204,6 +1373,7 @@ function createPane(id: string): PaneView {
       };
     },
     destroy() {
+      endDive();
       clearInterval(ticker);
       clearTimeout(noteTimer);
       term.dispose();
