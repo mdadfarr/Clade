@@ -293,25 +293,50 @@ function renderMarkdown(parent: HTMLElement, src: string, o: MdOptions): void {
 
 // ---- after a whole reply (or document) is drawn: effects and map links ----
 
+/** Where a map node points: a heading with its name (in its own reply first, then anywhere in the chat), else
+ *  a bold term with that name (a list of "**Topic**: ..." items), else a list item that starts with it. */
+function mapTarget(root: HTMLElement, scope: HTMLElement, target: string): HTMLElement | null {
+  const find = (sel: string, near: (e: HTMLElement) => HTMLElement) => {
+    for (const box of root === scope ? [root] : [root, scope]) {
+      const els = Array.from(box.querySelectorAll<HTMLElement>(sel));
+      const at = findHeading(target, els.map((e) => (e.textContent ?? '').replace(/[:\s]+$/, '')));
+      if (at >= 0) return near(els[at]);
+    }
+    return null;
+  };
+  return (
+    find('h1, h2, h3, h4', (e) => e) ??
+    find('strong, b', (e) => e.closest<HTMLElement>('li, p') ?? e) ??
+    find('li', (e) => e)
+  );
+}
+
 /** root: one reply (all its text parts) or one document. Only the first effect heading keeps its effect. */
 function finishReply(root: HTMLElement, _o?: unknown): void {
   const fx = Array.from(root.querySelectorAll<HTMLElement>('h1.fx, h2.fx'));
   fx.slice(1).forEach((h) => (h.className = ''));
-  const heads = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4'));
-  const texts = heads.map((h) => h.textContent ?? '');
-  for (const pill of Array.from(root.querySelectorAll<HTMLElement>('.mappill'))) {
-    const at = findHeading(pill.dataset.target ?? '', texts);
-    if (at < 0) {
-      pill.title = 'No section with this name';
-      continue;
+  const pills = Array.from(root.querySelectorAll<HTMLElement>('.mappill'));
+  if (!pills.length) return;
+  // Resolved once the whole chat is drawn (a reply is finished before the ones after it exist), over the whole
+  // chat: the place a map node names may be a section of a later reply.
+  queueMicrotask(() => {
+    const scope = root.parentElement ?? root;
+    for (const pill of pills) {
+      const at = mapTarget(root, scope, pill.dataset.target ?? '');
+      if (!at) {
+        pill.title = 'No section with this name in this chat';
+        continue;
+      }
+      pill.classList.add('link');
+      pill.title = `Go to "${(at.textContent ?? '').trim().slice(0, 80)}"`;
+      pill.addEventListener('click', () => {
+        // looked up again: the chat may have been drawn anew since
+        const el = (root.isConnected && mapTarget(root, root.parentElement ?? root, pill.dataset.target ?? '')) || at;
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.classList.remove('flashh');
+        void el.offsetWidth; // restart the flash
+        el.classList.add('flashh');
+      });
     }
-    pill.classList.add('link');
-    pill.title = `Go to "${texts[at].trim()}"`;
-    pill.addEventListener('click', () => {
-      heads[at].scrollIntoView({ behavior: 'smooth', block: 'start' });
-      heads[at].classList.remove('flashh');
-      void heads[at].offsetWidth; // restart the flash
-      heads[at].classList.add('flashh');
-    });
-  }
+  });
 }
