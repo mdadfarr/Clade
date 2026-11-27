@@ -49,6 +49,7 @@ function renderLayout(): void {
   top.style.minWidth = top.style.minHeight = '';
   wsEl.replaceChildren(top);
   document.body.classList.toggle('multi', panes.size > 1);
+  queueMicrotask(updateNewChat);
   for (const v of panes.values()) {
     v.el.classList.toggle('focused', v.id === focusId);
     v.el.classList.toggle('maxed', ws.max === v.id);
@@ -124,6 +125,7 @@ function focusPaneView(v: PaneView | undefined, typeHere = false): void {
   const changed = focusId !== v.id;
   focusId = ws.focus = v.id;
   for (const x of panes.values()) x.el.classList.toggle('focused', x.id === focusId);
+  updateNewChat();
   if (changed) {
     api.paneFocus(v.id);
     rebuildGraph();

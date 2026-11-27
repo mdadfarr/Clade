@@ -28,7 +28,7 @@ test('focus ring: the system ring is off, the app ring is accent and keyboard on
   assert.match(css, /:where\([^)]*button[^)]*\):focus\s*\{\s*outline:\s*none;?\s*\}/);
   const ring = css.match(/:where\([^)]*button[^)]*\):focus-visible\s*\{([^}]*)\}/);
   assert.ok(ring);
-  assert.match(ring![1], /outline:\s*2px solid var\(--t-accent\)/);
+  assert.match(ring![1], /outline:\s*2px solid var\(--accent-text\)/);
 });
 
 test('the jump arrow is not centered over the reading column', () => {
@@ -49,7 +49,7 @@ test('dropdowns: every select in the app gets the theme colors, and the page sta
   assert.deepStrictEqual(sites.map((s) => s.split(':')[0]), ['renderer.ts', 'renderer.ts']); // the one select helper in Settings
   // The rule covers every select and option, wherever it is, with explicit text and background colors.
   const r = rule('select, option, optgroup');
-  assert.match(r, /(^|;)\s*color:\s*var\(--text\)/);
+  assert.match(r, /(^|;)\s*color:\s*var\(--text-1\)/);
   assert.match(r, /background-color:\s*var\(--surface\)/);
   assert.match(rule(':root'), /color-scheme:\s*light dark/);
   assert.match(html, /<meta name="color-scheme" content="light dark">/);
@@ -59,8 +59,8 @@ test('dropdowns: every select in the app gets the theme colors, and the page sta
 test('selected text is a light accent tint in light and dark, and keeps its own text color', () => {
   const light = rule('::selection');
   const dark = rule('body.dark ::selection');
-  assert.match(light, /background:\s*color-mix\(in srgb, var\(--accent-fill\) \d+%, transparent\)/);
-  assert.match(dark, /background:\s*color-mix\(in srgb, var\(--accent-fill\) \d+%, transparent\)/);
+  assert.match(light, /background:\s*color-mix\(in srgb, var\(--accent\) \d+%, transparent\)/);
+  assert.match(dark, /background:\s*color-mix\(in srgb, var\(--accent\) \d+%, transparent\)/);
   assert.doesNotMatch(light + dark, /(^|[^-])color:/);
 });
 
@@ -71,7 +71,7 @@ test('big title: no canvas or dots left; a soft accent glow on hover, none with 
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8'), /halftone/);
   assert.match(rule('.claude h1.fx, .claude h2.fx'), /font-size:\s*clamp\(var\(--h1-size\), 11cqi, var\(--fx-size\)\)/);
   const hover = rule('.claude h1.fx:hover, .claude h2.fx:hover');
-  assert.match(hover, /text-shadow:[^;]*var\(--t-accent\)[^;]*var\(--fx-glow\)/);
+  assert.match(hover, /text-shadow:[^;]*var\(--accent-text\)[^;]*var\(--fx-glow\)/);
   assert.doesNotMatch(hover, /gradient/);
   assert.match(css, /prefers-reduced-motion: reduce\)\s*\{\s*\.claude h1\.fx[^{]*\{\s*text-shadow:\s*none/);
 });

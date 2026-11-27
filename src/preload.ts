@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('api', {
   skillSwitch: (name: string, on: boolean) => ipcRenderer.invoke('skill-switch', name, on),
   skillAdd: () => ipcRenderer.invoke('skill-add'),
   designSet: (patch: unknown) => ipcRenderer.send('design-set', patch),
+  onBgPicture: (cb: (bytes: Uint8Array | null, mime: string) => void) => ipcRenderer.on('bg-picture', (_e, b, m) => cb(b, m)),
   onAccount: (cb: (a: unknown) => void) => ipcRenderer.on('account', (_e, a) => cb(a)),
   accountRefresh: () => ipcRenderer.send('account-refresh'),
   showUsage: (pane: string) => ipcRenderer.send('show-usage', pane),

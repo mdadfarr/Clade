@@ -4,12 +4,12 @@ import * as os from 'os';
 import * as path from 'path';
 import * as http from 'http';
 import * as pty from 'node-pty';
-import { DEFAULT_DESIGN, Design, readDesign, resolveTheme, Theme } from './design';
+import { DEFAULT_DESIGN, Design, designOverrides, PICTURE_NAME, readDesign, resolveTheme, Theme } from './design';
 import { CLAUDE_MD, MD_END, MD_OLD_MARKER, MD_START } from './claude-md';
 import { buildChats } from './chats';
 import { artifactName, mergeAllow } from './artifacts';
 import { registerArtifactScheme, startArtifacts } from './artifact-host';
-import { ACCENT_NAMES, ACCENTS, applyLook, DEFAULT_LOOK, isAccentName, matchLook } from './themes';
+import { ACCENT_NAMES, ACCENTS, applyLook, BACKGROUNDS, BASE, DEFAULT_LOOK, isAccentName, matchLook } from './themes';
 import { applySettings, DEFAULT_SETTINGS, Effort, clearBoxKeys, effortInText, MAX_MODE_PRESSES, modelInBanner, Mode, modeInText, MODES, parseSettings, Settings, startFlags, stopScreen, validModel, zoomStep } from './settings';
 import { addSkill, listSkills, mergeSkillSwitch } from './skills';
 import { Account, NO_NETWORK_PROFILE, parseAuthStatus, UNKNOWN } from './account';
@@ -45,15 +45,65 @@ let designNote: string | null = null; // e.g. the file is in the old format
 
 function send(): void {
   nativeTheme.themeSource = current.theme; // menus and native controls follow the same theme
-  win?.webContents.send('design', current, error, designNote, resolveTheme(current.theme, nativeTheme.shouldUseDarkColors), looks());
+  const theme = resolveTheme(current.theme, nativeTheme.shouldUseDarkColors);
+  win?.webContents.send('design', current, error, designNote, theme, looks(theme));
+  sendPicture();
+}
+
+// ---- background picture: a file in the project's backgrounds/ folder, named in design.json. The page
+// gets its bytes (and makes a blob: URL of them), so it never loads a file path itself. Sent again only
+// when the file or its name changes. ----
+const PICTURE_MAX = 25 * 1024 * 1024;
+const PICTURE_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+let pictureSent = '';
+function sendPicture(): void {
+  const name = current.background && 'picture' in current.background ? current.background.picture : '';
+  const file = name ? path.join(folder, 'backgrounds', name) : '';
+  let key = '';
+  try {
+    const st = file ? fs.statSync(file) : null;
+    key = st && st.isFile() && st.size <= PICTURE_MAX ? `${file}:${st.size}:${st.mtimeMs}` : name ? 'missing' : '';
+  } catch {
+    key = name ? 'missing' : '';
+  }
+  if (key === pictureSent) return;
+  pictureSent = key;
+  if (!key || key === 'missing') {
+    win?.webContents.send('bg-picture', null, '');
+    if (key === 'missing') win?.webContents.send('note', '', `Background picture not found or over 25 MB: backgrounds/${name}`);
+    return;
+  }
+  const mime = PICTURE_TYPES[name.slice(name.lastIndexOf('.') + 1).toLowerCase()];
+  win?.webContents.send('bg-picture', new Uint8Array(fs.readFileSync(file)), mime);
+}
+/** Settings > Background > Picture: the user picks an image; a copy goes into backgrounds/ in the project. */
+async function pickPicture(): Promise<void> {
+  if (!win) return;
+  const r = await dialog.showOpenDialog(win, { title: 'Choose a background picture', properties: ['openFile'], filters: [{ name: 'Pictures', extensions: Object.keys(PICTURE_TYPES) }] });
+  if (r.canceled || !r.filePaths[0]) return;
+  const src = r.filePaths[0];
+  const ext = path.extname(src).slice(1).toLowerCase();
+  if (!PICTURE_TYPES[ext]) return;
+  if (fs.statSync(src).size > PICTURE_MAX) return void win.webContents.send('note', '', 'That picture is over 25 MB.');
+  let base = path.basename(src, path.extname(src)).replace(/[^A-Za-z0-9 ._-]+/g, '-').replace(/^[^A-Za-z0-9]+/, '').slice(0, 60) || 'background';
+  const name = `${base}.${ext}`;
+  if (!PICTURE_NAME.test(name)) return;
+  fs.mkdirSync(path.join(folder, 'backgrounds'), { recursive: true });
+  fs.copyFileSync(src, path.join(folder, 'backgrounds', name));
+  pictureSent = ''; // same name, new file: send it again
+  writeDesign({ ...structuredClone(current), background: { picture: name } });
 }
 
 /** What the Settings rows draw: the stored accents (names, labels, fill colors) and which one the design
  * matches now. Only stored names ever come back from the page. */
-function looks() {
+function looks(theme: 'light' | 'dark') {
+  const now = matchLook(current);
   return {
-    now: matchLook(current),
-    accents: ACCENT_NAMES.map((id) => ({ id, label: ACCENTS[id].label, fill: ACCENTS[id].fill })),
+    now,
+    accent: now === 'custom' ? (current.look?.accent ?? DEFAULT_LOOK.accent) : now.accent, // which accent tokens to use
+    accents: ACCENT_NAMES.map((id) => ({ id, label: ACCENTS[id].label, fill: ACCENTS[id].fill, fillLight: ACCENTS[id].fillLight ?? ACCENTS[id].fill })),
+    backgrounds: BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, color: b.color })),
+    overrides: designOverrides(current, theme), // what design.json sets over tokens.css
   };
 }
 
@@ -834,7 +884,7 @@ app.whenReady().then(async () => {
         label: 'Design',
         submenu: [
           { label: 'Theme: Follow System', click: () => setTheme('system') },
-          { label: 'Theme: Light', click: () => setTheme('light') },
+          { label: 'Theme: Ivory (Light)', click: () => setTheme('light') },
           { label: 'Theme: Dark', click: () => setTheme('dark') },
           { type: 'separator' },
           { label: 'Reset Design', accelerator: 'Cmd+Shift+R', click: reset },
@@ -854,7 +904,7 @@ app.whenReady().then(async () => {
     icon: ICON,
     minWidth: 560,
     minHeight: 420,
-    backgroundColor: current.colors[resolveTheme(current.theme, nativeTheme.shouldUseDarkColors)].background,
+    backgroundColor: (matchLook(current) === 'custom' ? current.colors : BASE)[resolveTheme(current.theme, nativeTheme.shouldUseDarkColors)].background,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -866,6 +916,7 @@ app.whenReady().then(async () => {
   const noPageZoom = () => void win?.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   noPageZoom();
   win.webContents.on('did-finish-load', noPageZoom);
+  win.webContents.on('did-start-loading', () => (pictureSent = '')); // a reloaded page has no picture yet
   // CLADE_WHEEL_LOG=1: print every wheel event the page gets (to check a real trackpad pinch).
   ipcMain.on('wheel-log', (_e, line: unknown) => WHEEL_LOG && typeof line === 'string' && console.log(line.slice(0, 300)));
   artifacts = startArtifacts(win, folder, process.env.CLADE_ARTIFACT_LOG === '1');
@@ -1185,9 +1236,18 @@ app.whenReady().then(async () => {
       const accent = isAccentName(lk.accent) ? lk.accent : now.accent;
       next = applyLook(next, { accent });
     }
+    // Background: a preset (Ivory or Dark, which sets the theme too), or a picture the user picks.
+    const bg = typeof o.background === 'string' ? BACKGROUNDS.find((b) => b.id === o.background) : undefined;
+    if (bg) {
+      next.theme = bg.theme;
+      delete next.background;
+    }
+    if (o.background === 'none') delete next.background; // remove the picture, keep the theme
+    if (o.pickBackground === true) return void pickPicture();
     if (o.resetLook === true) {
       next = applyLook(next, DEFAULT_LOOK);
       next.theme = 'system';
+      delete next.background;
     }
     writeDesign(next);
   });

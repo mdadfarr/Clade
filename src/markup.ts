@@ -436,5 +436,45 @@ function quoteText(text: string): string {
   return t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n') + '\n\n';
 }
 
+/** Quotes sent before Reply kept TeX hold selection.toString() of KaTeX: each MathML symbol on its own
+ *  line (𝑀, ℎ, ...), then the drawn copy (M h, or one line). Folds each such run back into its line,
+ *  once: "square.\n𝑀\nℎ\nMh applies" -> "square. Mh applies". Other text is returned as it is. */
+const MATH_LETTER = /[\u{1D400}-\u{1D7FF}ℎ]/u;
+function repairMathDump(text: string): string {
+  if (!MATH_LETTER.test(text)) return text;
+  const lines = text.replace(/​/g, '').split('\n');
+  const squash = (s: string) => s.normalize('NFKC').replace(/\s+/g, '');
+  const out: string[] = [];
+  let join = false; // the next line continues the last one (the dump broke it)
+  const push = (l: string) => {
+    if (join && out.length) out[out.length - 1] = `${out[out.length - 1].trimEnd()} ${l.trim()}`;
+    else out.push(l);
+    join = false;
+  };
+  for (let i = 0; i < lines.length; ) {
+    if (lines[i].trim().length > 3) {
+      push(lines[i++]);
+      continue;
+    }
+    let j = i;
+    while (j < lines.length && lines[j].trim().length <= 3) j++;
+    const run = lines.slice(i, j);
+    const m = squash(run.join(''));
+    const next = j < lines.length ? squash(lines[j]) : '';
+    const half = m.length % 2 === 0 && m.slice(0, m.length / 2) === m.slice(m.length / 2) ? m.slice(0, m.length / 2) : '';
+    if (!m || !(MATH_LETTER.test(run.join('')) || half || (next && next.startsWith(m)))) {
+      run.forEach(push); // blank lines or short lines of ordinary text
+    } else {
+      join = out.length > 0;
+      if (!(next && next.startsWith(m))) {
+        push(half || m);
+        join = true;
+      } // else: the drawn copy is the next line; drop the MathML symbols and join it on
+    }
+    i = j;
+  }
+  return out.map((l) => l.replace(/ {2,}/g, ' ')).join('\n');
+}
+
 if (typeof module !== 'undefined')
-  module.exports = { mapTree, mapVisible, mapIndentStep, parseMem, memTarget, memCells, parseTimeline, parseCompare, parseFlow, TONE_NAMES, SIZE_NAMES, FX_NAMES, tagKind, parseFxHeading, stripTags, parseMap, normHeading, findHeading, tableCells, parseTable, calloutOf, CALLOUTS, toolNames, sendsOnKey, quoteText };
+  module.exports = { mapTree, mapVisible, mapIndentStep, parseMem, memTarget, memCells, parseTimeline, parseCompare, parseFlow, TONE_NAMES, SIZE_NAMES, FX_NAMES, tagKind, parseFxHeading, stripTags, parseMap, normHeading, findHeading, tableCells, parseTable, calloutOf, CALLOUTS, toolNames, sendsOnKey, quoteText, repairMathDump };

@@ -5,7 +5,7 @@ import {
   bool, contrastRatio, DEFAULT_DESIGN_V2, DesignV2, font, HeadingType, headingType, hex, MIN_CONTRAST, readable, readDesignV2, resolveTheme, Theme, Tone, TONES,
 } from './design-v2';
 
-import { DEFAULT_LOOK, isAccentName, Look, lookColors } from './themes';
+import { ACCENT_NAMES, DEFAULT_LOOK, isAccentName, Look, lookColors, matchLook } from './themes';
 
 export { contrastRatio, MIN_CONTRAST, resolveTheme, Theme, Tone, TONES };
 
@@ -27,32 +27,55 @@ export interface Design {
   effects: { enabled: boolean; glow: number };
   terminal: { fontSize: number };
   panels: Panel[];
-  look?: Look; // the accent last picked (optional; default cyan). The colors themselves are in `colors`.
+  background?: Background; // optional; none = the theme's own background
+  look?: Look; // the accent last picked (optional; default: Clay #D97757). The colors themselves are in `colors`.
 }
+
+/** What is behind the app: a preset ('theme' = the theme's own color; 'claude' is from the glass trial,
+ * when Claude's dark background was a separate choice: now the Dark theme itself, so it draws the same) or a
+ * picture: a file name in the project's backgrounds/ folder. */
+export type Background = { preset: 'theme' | 'claude' } | { picture: string };
+/** A picture's file name: plain name, no folders, an image type the page can draw. */
+export const PICTURE_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}\.(png|jpe?g|webp|gif)$/i;
 
 /** The big title's hover glow, 0 (none) to 1. Optional in the file. */
 export const DEFAULT_GLOW = 0.5;
+export const ICON_CONTRAST = 3;
 const OLD_FX = { size: 64, weight: 800 }; // the title size while titles were halftone dots
 
 const defaultColors = lookColors(DEFAULT_LOOK);
 
+// The defaults below are the values of tokens.css (design/DESIGN.md). The page draws from the tokens; a
+// value in design.json that still equals a default (this one or an older one) leaves the token in charge.
+// Anything else in the file wins (designOverrides).
 export const DEFAULT_DESIGN: Design = {
   version: 3,
   theme: 'system',
-  fonts: { ...DEFAULT_DESIGN_V2.fonts },
+  fonts: { reply: 'Source Serif 4 Variable, Source Serif 4, Georgia, serif', ui: 'Geist Variable, Geist, -apple-system, sans-serif', code: 'Geist Mono Variable, Geist Mono, Menlo, monospace' },
   type: {
-    body: 19, message: 17, ui: 14, small: 12.5, code: 15,
-    h1: { size: 40, weight: 700 }, h2: { size: 30, weight: 700 }, h3: { size: 23, weight: 600 }, h4: { size: 19, weight: 700 },
-    fx: { size: 88, weight: 800 },
+    body: 17, message: 15, ui: 14, small: 12.5, code: 13,
+    // DESIGN.md: only weights 400, 500 and 600
+    h1: { size: 40, weight: 600 }, h2: { size: 30, weight: 600 }, h3: { size: 23, weight: 600 }, h4: { size: 19, weight: 600 },
+    fx: { size: 88, weight: 600 },
   },
-  space: { exchange: 40, beforeH1: 56, beforeH2: 44, beforeH3: 32, afterHeading: 14, paragraph: 18, listItem: 10, block: 28, blockPadding: 16 },
-  layout: { chatWidth: 760, sidebarWidth: 240, sidebar: true },
+  space: { exchange: 32, beforeH1: 56, beforeH2: 44, beforeH3: 32, afterHeading: 14, paragraph: 16, listItem: 10, block: 16, blockPadding: 16 },
+  layout: { chatWidth: 720, sidebarWidth: 272, sidebar: true },
   colors: {
-    // The base surfaces with the Cyan accent (themes.ts). accentFill: the accent as a fill (send button,
+    // The base surfaces with the default accent (themes.ts). accentFill: the accent as a fill (send button,
     // toggles, selection); accentOn: text and icons on it; tones.accent: the accent as text.
     light: defaultColors.light,
     dark: defaultColors.dark,
-    tones: { ...DEFAULT_DESIGN_V2.colors.tones, accent: defaultColors.accent },
+    // Light shades a little darker than before: they must read on Ivory's code background too.
+    tones: {
+      ...DEFAULT_DESIGN_V2.colors.tones,
+      muted: { light: '#69645b', dark: '#a39d92' },
+      good: { light: '#1d7148', dark: '#6fcf97' },
+      warn: { light: '#925600', dark: '#e9b44c' },
+      green: { light: '#39711d', dark: '#9ccf6a' },
+      orange: { light: '#a7460b', dark: '#f29a5c' },
+      teal: { light: '#0f7073', dark: '#5fcfd0' },
+      accent: defaultColors.accent,
+    },
   },
   effects: { enabled: true, glow: DEFAULT_GLOW },
   terminal: { fontSize: 13 },
@@ -60,8 +83,67 @@ export const DEFAULT_DESIGN: Design = {
   look: { ...DEFAULT_LOOK },
 };
 
+// Older defaults: before the redesign (Paper) and during the glass trial. A file written then still has
+// them; they count as "not set".
+const OLD_DEFAULTS = [
+  {
+    fonts: { ...DEFAULT_DESIGN_V2.fonts } as Record<string, string>,
+    type: { body: 19, message: 17, ui: 14, small: 12.5, code: 15 } as Record<string, number>,
+    space: { exchange: 40, paragraph: 18, block: 28 } as Record<string, number>,
+    layout: { chatWidth: 760, sidebarWidth: 240 } as Record<string, number>,
+  },
+  {
+    fonts: { reply: 'Geist Variable, Geist, -apple-system, sans-serif' } as Record<string, string>,
+    type: { body: 15 } as Record<string, number>,
+    space: { exchange: 36 } as Record<string, number>,
+    layout: {} as Record<string, number>,
+  },
+];
+
+const OLD_HEAD_WEIGHTS: Record<(typeof HEADS)[number], number> = { h1: 700, h2: 700, h3: 600, h4: 700, fx: 800 };
+
+const SPACE_VARS: Record<(typeof SPACES)[number], string> = {
+  exchange: 'exchange', beforeH1: 'before-h1', beforeH2: 'before-h2', beforeH3: 'before-h3', afterHeading: 'after-heading',
+  paragraph: 'paragraph', listItem: 'list', block: 'block', blockPadding: 'block-pad',
+};
+const SIZE_VARS: Record<(typeof SIZES)[number], string> = { body: 'body-size', message: 'msg-size', ui: 'ui-size', small: 'small-size', code: 'code-size' };
+const ROLE_VARS: Record<Role, string> = {
+  background: 'bg', surface: 'surface', raised: 'raised', border: 'border', text: 'text-1', mutedText: 'text-2',
+  userBubble: 'user-bubble', userText: 'user-fg', codeBackground: 'code-bg', accentFill: 'accent', accentOn: 'on-accent',
+};
+
+/** The CSS variables design.json sets over tokens.css for this theme: every value that differs from the
+ * shipped default (current or pre-redesign). Colors only when they are not a stored look (edited by hand);
+ * the color tones (Claude's {good}, {bad}... and the red) always come from the file. */
+export function designOverrides(d: Design, theme: 'light' | 'dark'): Record<string, string> {
+  const out: Record<string, string> = {};
+  const D = DEFAULT_DESIGN;
+  const isDefault = (v: unknown, ...defaults: unknown[]) => defaults.some((x) => x !== undefined && JSON.stringify(x) === JSON.stringify(v));
+  const old = <K extends keyof (typeof OLD_DEFAULTS)[number]>(group: K, key: string) => OLD_DEFAULTS.map((o) => o[group][key]);
+  for (const k of ['reply', 'ui', 'code'] as const) if (!isDefault(d.fonts[k], D.fonts[k], ...old('fonts', k))) out[`--font-${k}`] = d.fonts[k];
+  for (const k of SIZES) if (!isDefault(d.type[k], D.type[k], ...old('type', k))) out[`--${SIZE_VARS[k]}`] = `${d.type[k]}px`;
+  for (const k of HEADS) {
+    if (d.type[k].size !== D.type[k].size) out[`--${k}-size`] = `${d.type[k].size}px`;
+    if (!isDefault(d.type[k].weight, D.type[k].weight, OLD_HEAD_WEIGHTS[k])) out[`--${k}-weight`] = `${d.type[k].weight}`;
+  }
+  for (const k of SPACES) if (!isDefault(d.space[k], D.space[k], ...old('space', k))) out[`--sp-${SPACE_VARS[k]}`] = `${d.space[k]}px`;
+  if (!isDefault(d.layout.chatWidth, D.layout.chatWidth, ...old('layout', 'chatWidth'))) out['--chat-width'] = `${d.layout.chatWidth}px`;
+  if (!isDefault(d.layout.sidebarWidth, D.layout.sidebarWidth, ...old('layout', 'sidebarWidth'))) out['--sidebar-width'] = `${d.layout.sidebarWidth}px`;
+  if (d.effects.glow !== DEFAULT_GLOW) out['--fx-glow'] = String(d.effects.glow);
+  for (const k of TONES) if (k !== 'accent') out[`--t-${k}`] = d.colors.tones[k][theme];
+  if (matchLook(d) === 'custom') {
+    const r = d.colors[theme];
+    for (const k of ROLES) out[`--${ROLE_VARS[k]}`] = r[k];
+    // the DESIGN.md tokens that stand for a role: the sidebar is the surface, its row fills are raised
+    out['--sidebar-bg'] = r.surface;
+    out['--row-active'] = out['--row-new'] = r.raised;
+    out['--accent-text'] = d.colors.tones.accent[theme];
+  }
+  return out;
+}
+
 function parseV3(raw: unknown): Design {
-  const d = obj(raw, ['version', 'theme', 'fonts', 'type', 'space', 'layout', 'colors', 'effects', 'terminal', 'panels', 'look'], 'design', ['look']);
+  const d = obj(raw, ['version', 'theme', 'fonts', 'type', 'space', 'layout', 'colors', 'effects', 'terminal', 'panels', 'look', 'background'], 'design', ['look', 'background']);
   if (d.version !== 3) throw new Error('version must be 3');
   if (d.theme !== 'system' && d.theme !== 'light' && d.theme !== 'dark') throw new Error('theme must be "system", "light" or "dark"');
   const f = obj(d.fonts, ['reply', 'ui', 'code'], 'fonts');
@@ -87,8 +169,23 @@ function parseV3(raw: unknown): Design {
     readable(r.text, r.background, `colors.${name}.text`, `colors.${name}.background`);
     readable(r.mutedText, r.background, `colors.${name}.mutedText`, `colors.${name}.background`);
     readable(r.userText, r.userBubble, `colors.${name}.userText`, `colors.${name}.userBubble`);
-    readable(r.accentOn, r.accentFill, `colors.${name}.accentOn`, `colors.${name}.accentFill`);
+    // Only icons sit on the accent fill (send arrow, switch knob): 3:1, the WCAG rule for non-text.
+    const onFill = contrastRatio(r.accentOn, r.accentFill);
+    if (onFill < ICON_CONTRAST) throw new Error(`colors.${name}.accentOn has contrast ${onFill.toFixed(1)} on colors.${name}.accentFill (needs ${ICON_CONTRAST})`);
     for (const k of TONES) readable(tones[k][name], r.background, `colors.tones.${k}.${name}`, `colors.${name}.background`);
+  }
+  let background: Background | undefined;
+  if (d.background !== undefined) {
+    const b = obj(d.background, ['preset', 'picture'], 'background', ['preset', 'picture']);
+    if ((b.preset === undefined) === (b.picture === undefined)) throw new Error('background must have either "preset" or "picture"');
+    if (b.preset !== undefined) {
+      if (b.preset !== 'theme' && b.preset !== 'claude') throw new Error('background.preset must be "theme" or "claude"');
+      background = { preset: b.preset };
+    } else {
+      if (typeof b.picture !== 'string' || !PICTURE_NAME.test(b.picture) || b.picture.includes('..'))
+        throw new Error('background.picture must be a file name in backgrounds/, like "sea.jpg" (png, jpg, webp or gif)');
+      background = { picture: b.picture };
+    }
   }
   // `dither` is from files written while titles were halftone dots: accepted (any value) and ignored.
   const e = obj(d.effects, ['enabled', 'glow', 'dither'], 'effects', ['glow', 'dither']);
@@ -108,7 +205,7 @@ function parseV3(raw: unknown): Design {
   if (d.look !== undefined) {
     // `theme` is from files written while there were four themes to pick: accepted and ignored.
     const lk = obj(d.look, ['theme', 'accent'], 'look', ['theme']);
-    if (!isAccentName(lk.accent)) throw new Error('look.accent must be one of: cyan mint blue violet pink coral amber green red');
+    if (!isAccentName(lk.accent)) throw new Error(`look.accent must be one of: ${ACCENT_NAMES.join(' ')}`);
     look = { accent: lk.accent };
   }
   return {
@@ -127,6 +224,7 @@ function parseV3(raw: unknown): Design {
     terminal: { fontSize: num(term.fontSize, 6, 40, 'terminal.fontSize') },
     panels: arr(d.panels, 'panels').map((p, i) => panel(p, `panels[${i}]`)),
     ...(look ? { look } : {}),
+    ...(background ? { background } : {}),
   };
 }
 
@@ -142,7 +240,7 @@ export function fromV2(o: DesignV2): Design {
   for (const k of ['body', 'ui', 'code'] as const) keep(o.type[k], was.type[k], (v) => (d.type[k] = v));
   for (const k of ['h1', 'h2', 'h3'] as const) keep(o.type[k], was.type[k], (v) => (d.type[k] = v));
   keep(o.layout.chatWidth, was.layout.chatWidth, (v) => (d.layout.chatWidth = v));
-  d.layout.sidebarWidth = o.layout.sidebarWidth;
+  keep(o.layout.sidebarWidth, was.layout.sidebarWidth, (v) => (d.layout.sidebarWidth = v));
   d.layout.sidebar = o.layout.sidebar;
   for (const th of ['light', 'dark'] as const) keep(o.colors[th], was.colors[th], (v) => (d.colors[th] = { ...d.colors[th], ...v }));
   for (const k of TONES) keep(o.colors.tones[k], was.colors.tones[k], (v) => (d.colors.tones[k] = v));

@@ -181,3 +181,14 @@ test('reply with a selection: each line quoted, blank lines kept as ">", an empt
   assert.strictEqual(M.quoteText('line one\n\n\n\nline two\r\n'), '> line one\n>\n> line two\n\n');
   assert.strictEqual(M.quoteText('x'.repeat(5000)).length, 2 + 2000 + 2);
 });
+
+test('old quotes with KaTeX symbols one per line are folded back into their lines', () => {
+  // as in a chat sent before Reply kept TeX: MathML symbols, then the drawn copy on its own line
+  const old = 'dd the x square, subtract the y square."\n𝑀\nℎ\nMh applies the rule to the point. The result is another point:\n(\n𝑥\n,\n\n−\n𝑦\n)\n(x,  −y).\nℎ\n𝑇\nh\nT\n  is the same point written as a row. It lets us ta';
+  assert.strictEqual(M.repairMathDump(old),
+    'dd the x square, subtract the y square." Mh applies the rule to the point. The result is another point: (x, −y). hT is the same point written as a row. It lets us ta');
+  // the drawn copy split into symbols too (what selection.toString() gives today)
+  assert.strictEqual(M.repairMathDump('Rule: \n𝑀\nℎ\nM \nh\n​\n  applies to it.'), 'Rule: Mh applies to it.');
+  // ordinary quotes are untouched, short lines and blank lines included
+  assert.strictEqual(M.repairMathDump('Yes\n\nNo\nok then'), 'Yes\n\nNo\nok then');
+});

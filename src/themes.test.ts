@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
-import { contrastRatio, DEFAULT_DESIGN, parseDesign, Roles, TONES } from './design';
-import { ACCENT_NAMES, ACCENTS, applyLook, BASE, DEFAULT_LOOK, lookColors, matchLook } from './themes';
+import { contrastRatio, DEFAULT_DESIGN, ICON_CONTRAST, parseDesign, Roles, TONES } from './design';
+import { ACCENT_NAMES, ACCENTS, applyLook, BASE, DEFAULT_LOOK, GLASS, lookColors, matchLook, PAPER } from './themes';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -18,10 +18,10 @@ const COLOR_GROUNDS = ['background', 'surface', 'codeBackground'] as const;
 test('every accent x light/dark: all text reads at 4.5 or more where it is drawn', () => {
   const fails: string[] = [];
   let checks = 0;
-  const check = (what: string, fg: string, bg: string) => {
+  const check = (what: string, fg: string, bg: string, floor = FLOOR) => {
     checks++;
     const r = contrastRatio(fg, bg);
-    if (r < FLOOR) fails.push(`${what}: ${fg} on ${bg} = ${r.toFixed(2)}`);
+    if (r < floor) fails.push(`${what}: ${fg} on ${bg} = ${r.toFixed(2)}`);
   };
   for (const ac of ACCENT_NAMES)
       for (const m of MODES) {
@@ -37,10 +37,10 @@ test('every accent x light/dark: all text reads at 4.5 or more where it is drawn
           for (const t of TONES) if (t !== 'accent') check(`${at} tone ${t} on ${g}`, tones[t][m], r[g]);
         }
         check(`${at} userText on userBubble`, r.userText, r.userBubble);
-        check(`${at} accentOn on accentFill`, r.accentOn, r.accentFill);
+        check(`${at} accentOn on accentFill`, r.accentOn, r.accentFill, ICON_CONTRAST); // only icons sit on the fill
       }
   assert.deepStrictEqual(fails, []);
-  assert.ok(checks > 9 * 2 * 40);
+  assert.ok(checks > 10 * 2 * 40);
 });
 
 test('every look applied to the default design passes the file validator as is', () => {
@@ -62,11 +62,13 @@ test('picking writes exactly the stored values and the accent name; nothing else
   assert.deepStrictEqual(d.look, { accent: 'red' });
   const rest = (x: typeof d) => ({ ...x, colors: { tones: { ...x.colors.tones, accent: null } }, look: null });
   assert.deepStrictEqual(rest(d), rest(base)); // sizes, other tones, everything else untouched
-  assert.strictEqual(base.look?.accent, 'cyan'); // the input is not changed
+  assert.strictEqual(base.look?.accent, 'default'); // the input is not changed
 });
 
-test('the default design is the base surfaces with Cyan, and reset brings it back', () => {
-  assert.deepStrictEqual(DEFAULT_LOOK, { accent: 'cyan' });
+test('the default design is the base surfaces with the default accent (Clay #D97757), and reset brings it back', () => {
+  assert.deepStrictEqual(DEFAULT_LOOK, { accent: 'default' });
+  assert.deepStrictEqual([DEFAULT_DESIGN.colors.dark.accentFill, DEFAULT_DESIGN.colors.light.accentFill], ['#D97757', '#D97757']);
+  assert.deepStrictEqual([DEFAULT_DESIGN.colors.dark.background, DEFAULT_DESIGN.colors.light.background], ['#262624', '#f7f6f1']);
   assert.deepStrictEqual(matchLook(DEFAULT_DESIGN), DEFAULT_LOOK);
   assert.deepStrictEqual(applyLook(applyLook(DEFAULT_DESIGN, { accent: 'green' }), DEFAULT_LOOK), DEFAULT_DESIGN);
 });
@@ -86,12 +88,14 @@ test('a hand-edited color shows as Custom; editing it back to the stored value m
 });
 
 test('old files stay valid: no look key is fine, and the old default colors count as Cyan', () => {
-  const old = structuredClone(DEFAULT_DESIGN) as any;
+  const old = applyLook(DEFAULT_DESIGN, { accent: 'cyan' }) as any;
+  old.colors.light = { ...old.colors.light, ...PAPER.light, surface: '#f0ede6', raised: '#e7e3da', codeBackground: '#efece4' };
+  old.colors.dark = { ...old.colors.dark, ...PAPER.dark };
+  old.colors.tones.accent.light = '#00787A';
   delete old.look;
-  Object.assign(old.colors.light, { surface: '#f0ede6', raised: '#e7e3da', codeBackground: '#efece4' });
   const parsed = parseDesign(JSON.stringify(old));
   assert.strictEqual(parsed.look, undefined);
-  assert.deepStrictEqual(matchLook(parsed), DEFAULT_LOOK);
+  assert.deepStrictEqual(matchLook(parsed), { accent: 'cyan' });
   // a recorded look whose colors were changed is Custom, even if they equal the old default
   assert.strictEqual(matchLook({ ...parsed, look: { accent: 'cyan' } }), 'custom');
 });
@@ -109,17 +113,28 @@ test('accent table values (plan 3, section 5)', () => {
   assert.deepStrictEqual(
     ACCENT_NAMES.map((a) => [a, ACCENTS[a].fill, ACCENTS[a].light, ACCENTS[a].dark, ACCENTS[a].on]),
     [
-      ['cyan', '#00E2E6', '#00787A', '#00E2E6', '#1d1c1a'],
-      ['mint', '#5EDFA4', '#1B7A50', '#5EDFA4', '#1d1c1a'],
+      ['default', '#D97757', '#9D4D2C', '#D97757', '#FFFFFF'],
+      ['cyan', '#00E2E6', '#007071', '#00E2E6', '#1d1c1a'],
+      ['mint', '#5EDFA4', '#19714A', '#5EDFA4', '#1d1c1a'],
       ['blue', '#6CB2FF', '#1F63B5', '#7DB8FF', '#1d1c1a'],
       ['violet', '#A99BFF', '#5B4BC4', '#B3A7FF', '#1d1c1a'],
-      ['pink', '#FFB7C5', '#B83A63', '#FFB7C5', '#1d1c1a'],
-      ['coral', '#FF9478', '#B3401F', '#FF9478', '#1d1c1a'],
-      ['amber', '#F4B740', '#8F5A00', '#F4B740', '#1d1c1a'],
-      ['green', '#069902', '#057B02', '#06A802', '#1d1c1a'],
+      ['pink', '#FFB7C5', '#AF375E', '#FFB7C5', '#1d1c1a'],
+      ['coral', '#FF9478', '#AF3F1E', '#FF9478', '#1d1c1a'],
+      ['amber', '#F4B740', '#8E5900', '#F4B740', '#1d1c1a'],
+      ['green', '#069902', '#057502', '#06A802', '#1d1c1a'],
       ['red', '#C20000', '#C20000', '#FF4D4D', '#FFFFFF'],
     ],
   );
+});
+
+test('a file from before the redesign (Paper surfaces, a stored accent) counts as that accent, so the page uses the new surfaces', () => {
+  for (const accent of ACCENT_NAMES.filter((a) => a !== 'default')) {
+    const d = applyLook(DEFAULT_DESIGN, { accent });
+    d.colors.light = { ...d.colors.light, ...PAPER.light };
+    d.colors.tones.accent.light = ({ cyan: '#00787A', mint: '#1B7A50', pink: '#B83A63', coral: '#B3401F', amber: '#8F5A00', green: '#057B02' } as Record<string, string>)[accent] ?? d.colors.tones.accent.light;
+    d.colors.dark = { ...d.colors.dark, ...PAPER.dark };
+    assert.deepStrictEqual(matchLook(parseDesign(JSON.stringify(d))), { accent });
+  }
 });
 
 test('old file from the four-theme days (Sand, Red, dither keys) loads without errors and shows as Custom', () => {
@@ -140,4 +155,18 @@ test('no theme picker is left in the code', () => {
     const t = fs.readFileSync(path.join(src, f), 'utf8');
     assert.doesNotMatch(t, /THEME_NAMES|THEMES\b|isThemeName|looktile|'slate'|'sand'|"slate"/, f);
   }
+});
+
+test('a file written during the glass trial counts as its accent, so the page uses the new surfaces', () => {
+  for (const accent of ACCENT_NAMES.filter((a) => a !== 'default')) {
+    const d = applyLook(DEFAULT_DESIGN, { accent });
+    d.colors.light = { ...d.colors.light, ...GLASS.light };
+    d.colors.dark = { ...d.colors.dark, ...GLASS.dark };
+    assert.deepStrictEqual(matchLook(d), { accent }, accent);
+  }
+  const d = structuredClone(DEFAULT_DESIGN);
+  d.colors.light = { ...GLASS.light, accentFill: '#C96442', accentOn: '#FFFFFF' };
+  d.colors.dark = { ...GLASS.dark, accentFill: '#7DD3FC', accentOn: '#06101F' };
+  d.colors.tones.accent = { light: '#9D4D2C', dark: '#7DD3FC' };
+  assert.deepStrictEqual(matchLook(d), { accent: 'default' });
 });

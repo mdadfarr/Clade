@@ -39,6 +39,7 @@ declare const api: {
   skillSwitch(name: string, on: boolean): Promise<{ skills: SkillInfo[]; error: string }>;
   skillAdd(): Promise<{ skills: SkillInfo[]; error: string }>;
   designSet(patch: object): void;
+  onBgPicture(cb: (bytes: Uint8Array | null, mime: string) => void): void;
   onAccount(cb: (a: AccountView) => void): void;
   accountRefresh(): void;
   showUsage(pane: string): void;
@@ -297,6 +298,36 @@ function artifactCard(parent: HTMLElement, name: string): void {
   b.addEventListener('click', () => info && api.openArtifact(name));
 }
 
+// ---- the empty new-chat screen (one pane, nothing in it yet): the jellyfish video plays behind the chat
+// area and fades out with the first message (DESIGN.md section 3). One file, white jellyfish on black,
+// colored by the accent and blended onto the theme's background in app.css (#jelly). ----
+const JELLY = 'assets/jellyfish/clade-jellyfish-mono.mp4';
+let jellyOff = 0;
+function updateNewChat(): void {
+  const v = fp();
+  const on = document.body.classList.contains('multi') ? false : !!v?.el.classList.contains('empty');
+  document.body.classList.toggle('newchat', on);
+  byId('newchat').classList.toggle('active', on);
+  const box = byId('jelly');
+  const video = box.querySelector('video') as HTMLVideoElement;
+  clearTimeout(jellyOff);
+  if (!on) {
+    // fade out (app.css), then stop decoding
+    jellyOff = window.setTimeout(() => video.pause(), 450);
+    return;
+  }
+  if (video.getAttribute('src') !== JELLY) {
+    box.classList.remove('ready');
+    video.src = JELLY;
+  }
+  if (video.paused) void video.play().catch(() => {});
+}
+(() => {
+  const box = byId('jelly');
+  const video = box.querySelector('video') as HTMLVideoElement;
+  video.addEventListener('playing', () => box.classList.add('ready'));
+})();
+
 // =====================================================================================================
 // One pane. Everything a chat needs lives in here, so panes never share state: each has its own chat,
 // message box, cards, live preview and hidden terminal, and works while another pane is focused.
@@ -456,6 +487,11 @@ function createPane(id: string): PaneView {
     renderHead();
     railFor = null;
     updateRail();
+    // The empty new-chat screen: heading and box in the middle, jellyfish behind (app.css .pane.empty).
+    const empty = !chat.items.length && !pending && !isBusy();
+    el.classList.toggle('empty', empty);
+    input.placeholder = empty ? 'How can I help?' : 'Ask a follow-up…';
+    updateNewChat();
   }
 
   // ---- live preview: the reply as it grows on Claude Code's (hidden) terminal. Plain text only, and
@@ -559,7 +595,8 @@ function createPane(id: string): PaneView {
     let n = 0;
     while (n < lines.length && /^>( |$)/.test(lines[n])) n++;
     if (n) {
-      renderMarkdown(add(bubble, 'div', 'userquote claude'), lines.slice(0, n).map((l) => l.replace(/^> ?/, '')).join('\n'), look);
+      const quoted = repairMathDump(lines.slice(0, n).map((l) => l.replace(/^> ?/, '')).join('\n'));
+      renderMarkdown(add(bubble, 'div', 'userquote claude'), quoted, look);
       bubble.appendChild(document.createTextNode(lines.slice(n).join('\n').replace(/^\n+/, '')));
     } else bubble.textContent = text;
     if (!r) return;
@@ -1723,7 +1760,10 @@ api.onSettings((s) => {
 
 interface Looks {
   now: { accent: string } | 'custom';
-  accents: { id: string; label: string; fill: string }[];
+  accent: string; // the accent whose tokens the page uses
+  accents: { id: string; label: string; fill: string; fillLight: string }[];
+  backgrounds: { id: string; label: string; color: string }[]; // the color presets of the Background row
+  overrides: Record<string, string>; // CSS variables design.json sets over tokens.css
 }
 let looks: Looks | null = null;
 
@@ -1740,6 +1780,31 @@ function drawLookRows(row: (title: string, hint: string) => HTMLElement): void {
     b.title = a.label;
     b.setAttribute('aria-label', `Accent ${a.label}`);
     b.addEventListener('click', () => api.designSet({ look: { accent: a.id } }));
+  }
+}
+
+/** Background: two color swatches (Ivory, Dark; each sets the theme too) and a picture of
+ *  the user's own (copied into backgrounds/ in the project). A click sends only a stored name. */
+function drawBackgroundRow(row: (title: string, hint: string) => HTMLElement): void {
+  if (!looks) return;
+  const pic: string = designNow?.background?.picture ?? '';
+  const now = pic ? 'picture' : themeNow === 'dark' ? 'dark' : 'ivory';
+  const r = row('Background', pic ? `Picture: backgrounds/${pic}` : '');
+  const dots = add(r, 'div', 'lookdots');
+  for (const b of looks.backgrounds) {
+    const d = add(dots, 'button', 'lookdot bgdot' + (now === b.id ? ' on' : '')) as HTMLButtonElement;
+    d.style.background = b.color;
+    d.title = b.label;
+    d.setAttribute('aria-label', `Background ${b.label}`);
+    d.addEventListener('click', () => api.designSet({ background: b.id }));
+  }
+  const p = add(r, 'button', 'setlink');
+  p.textContent = pic ? 'Other picture…' : 'Picture…';
+  p.addEventListener('click', () => api.designSet({ pickBackground: true }));
+  if (pic) {
+    const x = add(r, 'button', 'setlink');
+    x.textContent = 'Remove';
+    x.addEventListener('click', () => api.designSet({ background: 'none' }));
   }
 }
 
@@ -1778,12 +1843,13 @@ function drawSettings(): void {
   };
   const pid = fp()?.id ?? '';
   const ap = row('Appearance', '');
-  seg(ap, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], designNow?.theme ?? 'system', (theme) => api.designSet({ theme }));
+  seg(ap, [['system', 'System'], ['light', 'Ivory'], ['dark', 'Dark']], designNow?.theme ?? 'system', (theme) => api.designSet({ theme }));
   const rl = add(ap, 'button', 'setlink');
   rl.textContent = 'Reset to default';
-  rl.title = 'Cyan, System. Sizes, fonts and panels stay as they are.';
+  rl.title = 'Default accent (Clay), System. Sizes, fonts and panels stay as they are.';
   rl.addEventListener('click', () => api.designSet({ resetLook: true }));
   drawLookRows(row);
+  drawBackgroundRow(row);
   const zoom = row('Text size', 'Cmd+Plus, Cmd+Minus, Cmd+0');
   seg(zoom, [['-1', '−'], ['0', `${Math.round(opts.zoom * 100)}%`], ['1', '+']], '', (d) => api.zoom(+d));
   const busyHint = busy() ? ' Wait until Claude has finished to change these.' : '';
@@ -1898,13 +1964,15 @@ function drawAccountMenu(): void {
     b.textContent = label;
     b.addEventListener('click', () => api.designSet({ theme: tid }));
   }
-  drawLookRows((title, hint) => {
+  const flyRow = (title: string, hint: string) => {
     const r = add(fly, 'div', 'flyrow');
     const t = add(r, 'span', 'flytitle');
     t.textContent = title;
     if (hint) add(t, 'span', 'sethint').textContent = hint;
     return r;
-  });
+  };
+  drawLookRows(flyRow);
+  drawBackgroundRow(flyRow);
   drawUsage(m);
   item('Get help', () => {
     closeAccountMenu();
@@ -2051,25 +2119,61 @@ function renameIn(el: HTMLElement, rid: string, name: string, inPlace = false): 
   field.addEventListener('pointerdown', (e) => e.stopPropagation()); // not a pane drag
   field.addEventListener('blur', () => finish(true));
 }
+/** "just now", "5 min ago", "yesterday", "8 days ago", "last month"... for the line under a chat's title. */
+function ago(t: number, now = Date.now()): string {
+  if (!t) return '';
+  const min = Math.floor((now - t) / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return h === 1 ? '1 hour ago' : `${h} hours ago`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'yesterday';
+  if (d < 7) return `${d} days ago`;
+  if (d < 14) return 'last week';
+  if (d < 30) return `${Math.floor(d / 7)} weeks ago`;
+  if (d < 60) return 'last month';
+  if (d < 365) return `${Math.floor(d / 30)} months ago`;
+  return d < 730 ? 'last year' : `${Math.floor(d / 365)} years ago`;
+}
+// A section header: its own word and a small icon (the groups come from chats.ts dateGroup).
+const GROUP_ICONS: Record<string, string[]> = {
+  Today: [circle(8, 8, 5.5), 'M8 5v3l2 1.5'],
+  Yesterday: ['M3 8a5 5 0 1 0 1.5-3.6', 'M3 2.5v2.5h2.5', 'M8 5.5V8l1.75 1.25'],
+  'Previous 7 days': ['M3 4.5h10v8.5H3z', 'M3 7h10', 'M5.5 3v2.5M10.5 3v2.5'],
+  Earlier: ['M2.5 3.5h11v3h-11z', 'M3.5 6.5v6h9v-6', 'M6.5 9h3'],
+};
+const GROUP_WORDS: Record<string, string> = { 'Previous 7 days': 'This week' };
+let findText = '';
 function renderChats(): void {
   if (renaming || dragChat) return; // a drag keeps its row (redrawn when the drag ends)
   const box = byId('chats');
   box.replaceChildren();
+  const q = findText.trim().toLowerCase();
+  const shown = q ? chats.filter((c) => c.title.toLowerCase().includes(q) || c.full.toLowerCase().includes(q)) : chats;
+  if (q && !shown.length) add(box, 'div', 'chatempty').textContent = 'No chat matches.';
   let group = '';
-  for (const c of chats) {
-    if (c.group !== group) add(box, 'div', 'chatgroup').textContent = group = c.group;
+  const now = Date.now();
+  for (const c of shown) {
+    if (c.group !== group) {
+      const g = add(box, 'div', 'chatgroup');
+      icon(g, GROUP_ICONS[c.group] ?? GROUP_ICONS.Earlier, 14, 1.3);
+      add(g, 'span').textContent = GROUP_WORDS[c.group] ?? c.group;
+      group = c.group;
+    }
     const row = add(box, 'button', 'chatrow' + (c.current ? ' current' : '') + (c.running ? ' running' : ''));
-    add(row, 'span', 'chattitle').textContent = c.title;
+    const dot = add(row, 'span', 'chatdot');
+    if (c.running) dot.setAttribute('aria-label', 'Claude is working here');
+    const body = add(row, 'span', 'chatbody');
+    add(body, 'span', 'chattitle').textContent = c.title;
+    const meta = add(body, 'span', 'chatmeta');
+    add(meta, 'span').textContent = c.running ? 'working…' : ago(c.updated, now);
     if (c.branches) {
-      const n = add(row, 'span', 'chatcount');
+      add(meta, 'span', 'sep').textContent = '·';
+      const n = add(meta, 'span', 'chatcount');
       icon(n, ICONS.branch, 11);
       add(n, 'span').textContent = String(c.branches);
       n.title = c.branches === 1 ? '1 branch (see the graph)' : `${c.branches} branches (see the graph)`;
-    }
-    if (c.running) {
-      const d = add(row, 'span', 'chatdots');
-      d.setAttribute('aria-label', 'Claude is working here');
-      for (let i = 0; i < 3; i++) add(d, 'i');
     }
     // Opening a chat only shows it; Claude starts there when you send a message.
     const where = c.panes?.length ? `\nOpen in ${c.panes.length === 1 ? 'a pane' : `${c.panes.length} panes`}` : '';
@@ -2099,6 +2203,29 @@ function renderChats(): void {
     row.addEventListener('dragend', endChatDrag);
   }
 }
+setInterval(renderChats, 60_000); // keeps "5 min ago" true
+// Find a chat: the search button opens a field over the list; Esc or an empty field on blur closes it.
+const findWrap = byId('findwrap');
+const findField = byId('findchat') as HTMLInputElement;
+function showFind(on: boolean): void {
+  findWrap.hidden = !on;
+  byId('sidesearch').setAttribute('aria-pressed', String(on));
+  if (on) findField.focus();
+  else if (findText) {
+    findText = findField.value = '';
+    renderChats();
+  }
+}
+byId('sidesearch').addEventListener('click', () => showFind(findWrap.hidden));
+findField.addEventListener('input', () => {
+  findText = findField.value;
+  renderChats();
+});
+findField.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') showFind(false);
+  e.stopPropagation();
+});
+findField.addEventListener('blur', () => !findField.value && showFind(false));
 api.onChats((c) => {
   chats = c;
   renderChats();
@@ -2114,7 +2241,7 @@ narrow.addEventListener('change', () => {
   document.body.classList.remove('sideopen');
   placeArtifact();
 });
-// ---- chat list width: drag its right edge (160 to 480 px), arrow keys on the edge, double-click for 240.
+// ---- chat list width: drag its right edge (160 to 480 px), arrow keys on the edge, double-click for 272.
 // Saved in design.json (layout.sidebarWidth) when the drag ends. ----
 const grip = byId('sidegrip');
 const sideW = () => parseFloat(getComputedStyle(byId('sidebar')).width); // without the border
@@ -2145,59 +2272,38 @@ grip.addEventListener('pointerdown', (e) => {
   grip.addEventListener('pointerup', up);
   grip.addEventListener('pointercancel', up);
 });
-grip.addEventListener('dblclick', () => setSideWidth(240, true));
+grip.addEventListener('dblclick', () => setSideWidth(272, true));
 grip.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
   e.preventDefault();
   setSideWidth(sideW() + (e.key === 'ArrowLeft' ? -16 : 16), true);
 });
-byId('sidetoggle').addEventListener('click', () => {
+const toggleSide = () => {
   document.body.classList.toggle(narrow.matches ? 'sideopen' : 'sideclosed');
   placeArtifact();
-});
+};
+byId('sidetoggle').addEventListener('click', toggleSide);
+byId('sidehide').addEventListener('click', toggleSide);
 
-// ---- design. Already validated by the main process. Values go in as CSS variables and text nodes only. ----
+// ---- design. Already validated by the main process. The look comes from tokens.css (theme and accent on
+// <body>); main sends only what design.json sets over the tokens (`overrides`), and those go on <body style>
+// as CSS variables. Values go in as CSS variables and text nodes only. ----
+let overridden: string[] = [];
 function apply(d: any, theme: 'light' | 'dark'): void {
   const css = document.body.style;
-  const r = d.colors[theme];
-  const set = (name: string, value: string) => css.setProperty(name, value);
-  set('--bg', r.background);
-  set('--surface', r.surface);
-  set('--raised', r.raised);
-  set('--border', r.border);
-  set('--text', r.text);
-  set('--muted-text', r.mutedText);
-  set('--user-bg', r.userBubble);
-  set('--user-fg', r.userText);
-  set('--code-bg', r.codeBackground);
-  for (const [name, v] of Object.entries(d.colors.tones) as [string, { light: string; dark: string }][]) set(`--t-${name}`, v[theme]);
-  set('--accent-fill', r.accentFill);
-  set('--accent-on', r.accentOn);
-  set('--font-reply', d.fonts.reply);
-  set('--font-ui', d.fonts.ui);
-  set('--font-code', d.fonts.code);
-  set('--body-size', `${d.type.body}px`);
-  set('--msg-size', `${d.type.message}px`);
-  set('--ui-size', `${d.type.ui}px`);
-  set('--small-size', `${d.type.small}px`);
-  set('--code-size', `${d.type.code}px`);
-  const sp = d.space;
-  const spaces: Record<string, number> = {
-    exchange: sp.exchange, 'before-h1': sp.beforeH1, 'before-h2': sp.beforeH2, 'before-h3': sp.beforeH3, 'after-heading': sp.afterHeading,
-    paragraph: sp.paragraph, list: sp.listItem, block: sp.block, 'block-pad': sp.blockPadding,
-  };
-  for (const [k, v] of Object.entries(spaces)) set(`--sp-${k}`, `${v}px`);
-  for (const h of ['h1', 'h2', 'h3', 'h4', 'fx']) {
-    set(`--${h}-size`, `${d.type[h].size}px`);
-    set(`--${h}-weight`, `${d.type[h].weight}`);
-  }
-  set('--chat-width', `${d.layout.chatWidth}px`);
-  set('--sidebar-width', `${d.layout.sidebarWidth}px`);
+  for (const name of overridden) css.removeProperty(name);
+  const o: Record<string, string> = looks?.overrides ?? {};
+  for (const [name, value] of Object.entries(o)) css.setProperty(name, value);
+  overridden = Object.keys(o);
+  document.body.dataset.theme = theme === 'dark' ? 'dark' : 'ivory';
+  document.body.dataset.accent = looks?.accent ?? 'default';
+  document.body.dataset.bg = d.background?.picture ? 'picture' : 'theme';
+  queueMicrotask(updateNewChat); // the video follows theme and accent
   document.body.classList.toggle('dark', theme === 'dark');
   document.documentElement.style.colorScheme = theme; // native controls (dropdown lists, scrollbars) follow the app's theme
   document.body.classList.toggle('nosidebar', !d.layout.sidebar);
-  look = { ...look, bg: hexToRgb(r.background), effects: d.effects.enabled };
-  set('--fx-glow', String(d.effects.glow ?? 0.5));
+  const bg = getComputedStyle(document.body).getPropertyValue('--bg').trim();
+  look = { ...look, bg: hexToRgb(/^#[0-9a-f]{6}$/i.test(bg) ? bg : d.colors[theme].background), effects: d.effects.enabled };
   for (const v of panes.values()) v.theme(d, theme);
 
   for (const side of ['left', 'right', 'bottom']) byId(side).replaceChildren();
@@ -2215,6 +2321,15 @@ function apply(d: any, theme: 'light' | 'dark'): void {
     }
   }
 }
+
+// The background picture: its bytes come from main; the page shows them through a blob: URL.
+let pictureUrl = '';
+api.onBgPicture((bytes, mime) => {
+  if (pictureUrl) URL.revokeObjectURL(pictureUrl);
+  pictureUrl = bytes ? URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: mime })) : '';
+  if (pictureUrl) document.body.style.setProperty('--bg-image', `url("${pictureUrl}")`);
+  else document.body.style.removeProperty('--bg-image');
+});
 
 api.onDesign((d, error, info, theme, l) => {
   designNow = d;

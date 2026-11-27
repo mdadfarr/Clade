@@ -1,0 +1,211 @@
+/* Clade design tokens: every value from design/DESIGN.md, in one place. Components (app.css) read only
+   these variables. Two themes, Ivory (light, default) and Dark (Claude app dark), set on <body data-theme>;
+   the accent is <body data-accent> (renderer.ts sets both). No glass, no blur, no glows: flat warm colors,
+   1 px borders, one soft shadow (the input box).
+
+   design.json still wins: renderer.ts puts every value the user changed there (fonts, sizes, spacing,
+   hand-edited colors) on <body style>, which beats the rules here. A value that equals the shipped default
+   is left out, so the theme's token decides it (designOverrides in design.ts). */
+
+/* ---------- shared: type, radius, layout, motion ---------- */
+:root {
+  /* fonts (local files from node_modules/@fontsource-variable, loaded in index.html) */
+  --font-sans: 'Geist Variable', 'Geist', -apple-system, 'Helvetica Neue', sans-serif;
+  --font-serif: 'Source Serif 4 Variable', 'Source Serif 4', Georgia, serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', Menlo, monospace;
+  --font-ui: var(--font-sans);
+  --font-reply: var(--font-serif);
+  --font-code: var(--font-mono);
+
+  /* weights: only these three */
+  --w-regular: 400;
+  --w-medium: 500;
+  --w-semibold: 600;
+
+  /* sizes */
+  --ui-size: 14px;          /* sidebar, header title, labels */
+  --msg-size: 15px;         /* user messages, input text */
+  --body-size: 17px;        /* Claude's replies */
+  --meta-size: 13px;        /* "Share" (Graph), model name, branch switcher */
+  --label-size: 12px;       /* "Recent", avatar initial */
+  --small-size: 12.5px;     /* app notes, menus (not in DESIGN.md) */
+  --code-size: 13px;
+  --plus-size: 16px;        /* "+" of New chat */
+  --lh: 1.55;               /* default line height */
+  --body-lh: 1.65;          /* replies */
+  --row-lh: 1.2;            /* sidebar rows */
+
+  /* logo and empty-screen heading */
+  --logo-font: var(--font-serif); --logo-size: 22px; --logo-weight: var(--w-medium); --logo-lh: 1.2;
+  --hello-font: var(--font-serif); --hello-size: 36px; --hello-weight: var(--w-regular);
+
+  /* headings inside replies (sizes not in DESIGN.md: unchanged; weights at most 600) */
+  --h1-size: 40px; --h1-weight: 600;
+  --h2-size: 30px; --h2-weight: 600;
+  --h3-size: 23px; --h3-weight: 600;
+  --h4-size: 19px; --h4-weight: 600;
+  --fx-size: 88px; --fx-weight: 600;
+  --fx-glow: 0.5;           /* the big title's hover glow (design.json effects.glow) */
+
+  /* radius */
+  --r-new: 10px;            /* "New chat" row */
+  --r-row: 8px;             /* chat row */
+  --r-bubble: 16px;         /* user bubble */
+  --r-code: 10px;           /* code block */
+  --r-input: 20px;          /* input box */
+  --r-send: 10px;           /* send button */
+  --r-round: 9999px;        /* avatar */
+  --r-menu: 12px;           /* menus, popovers, cards (not in DESIGN.md) */
+  --r-small: 8px;           /* small buttons (not in DESIGN.md) */
+
+  /* sidebar */
+  --sidebar-width: 272px;
+  --side-pad-top: 20px;
+  --side-pad-bottom: 20px;
+  --side-pad-x: 16px;
+  --side-gap: 2px;          /* between items */
+  --logo-pad-left: 8px;
+  --logo-gap: 20px;         /* logo to "New chat" */
+  --new-height: 42px;
+  --new-pad-y: 10px;
+  --new-pad-x: 12px;
+  --new-gap: 20px;          /* "New chat" to "Recent" */
+  --row-icon-gap: 10px;
+  --label-pad-left: 12px;
+  --label-pad-bottom: 6px;
+  --row-height: 38px;
+  --row-pad-y: 8px;
+  --row-pad-x: 12px;
+  --avatar-size: 28px;
+  --foot-gap: 10px;
+  --foot-pad-left: 8px;
+
+  /* chat area */
+  --chat-pad-top: 16px;
+  --chat-pad-bottom: 24px;
+  --head-pad-x: 24px;
+  --chat-width: 720px;
+  --thread-pad-top: 48px;
+  --bubble-pad-y: 12px;
+  --bubble-pad-x: 18px;
+  --code-pad-y: 14px;
+  --code-pad-x: 16px;
+  --switcher-gap: 12px;
+
+  /* spacing inside replies (design.json "space") */
+  --sp-exchange: 32px;      /* gap between messages */
+  --sp-paragraph: 16px;     /* gap between parts of one reply */
+  --sp-block: 16px;
+  --sp-block-pad: 16px;
+  --sp-before-h1: 56px;
+  --sp-before-h2: 44px;
+  --sp-before-h3: 32px;
+  --sp-after-heading: 14px;
+  --sp-list: 10px;
+
+  /* input box */
+  --input-pad-top: 18px;
+  --input-pad-right: 14px;
+  --input-pad-bottom: 14px;
+  --input-pad-left: 20px;
+  --input-gap: 14px;
+  --send-size: 32px;
+  --send-glyph: 16px;
+
+  /* empty new-chat screen */
+  --hello-gap: 32px;        /* heading to input box */
+  --hello-input-top: 51.44%; /* input box top: y 463 of the 900 px tall window */
+
+  /* motion */
+  --fade: 150ms;
+  --video-fade: 400ms;
+}
+
+/* ---------- Ivory (light, default): exact, from the Figma frame "E — Ivory" ---------- */
+body[data-theme='ivory'] {
+  color-scheme: light;
+  --bg: #f7f6f1;
+  --sidebar-bg: #efede6;
+  --text-1: #1f1e1c;
+  --text-2: #5f5e58;
+  --text-3: #97958c;
+  --row-active: #e4e1d6;
+  --row-new: #e6e3d9;
+  --user-bubble: #ece9e0;
+  --user-fg: var(--text-1);
+  --code-bg: #efede6;
+  --border: #e3e0d6;
+  --input-bg: #ffffff;
+  --input-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  /* not in DESIGN.md: menus, popovers, cards, small hover tints */
+  --surface: #efede6;       /* = sidebar (design.json "surface") */
+  --raised: #e4e1d6;        /* = active row (design.json "raised") */
+  --menu-bg: var(--input-bg);
+  --menu-hover: color-mix(in srgb, var(--row-active) 60%, transparent);
+  --menu-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
+  /* Claude's color tones (design.json colors.tones; the file overrides these) */
+  --t-muted: #69645b; --t-good: #1d7148; --t-warn: #925600; --t-bad: #b3302a; --t-blue: #1f63b5;
+  --t-green: #39711d; --t-orange: #a7460b; --t-purple: #8a3aa8; --t-pink: #b02d73; --t-teal: #0f7073;
+}
+
+/* ---------- Dark: the Claude app's dark mode (DESIGN.md approximations; same layout as Ivory) ---------- */
+body[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #262624;
+  --sidebar-bg: #1f1e1d;
+  --text-1: #faf9f5;
+  --text-2: #c2c0b6;
+  --text-3: #8f8d85;
+  --row-active: #30302e;
+  --row-new: #2b2a28;
+  --user-bubble: #141413;
+  --user-fg: var(--text-1);
+  --code-bg: #1f1e1d;
+  --border: rgba(222, 220, 209, 0.15);
+  --input-bg: #30302e;
+  --input-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  --surface: #1f1e1d;
+  --raised: #30302e;
+  --menu-bg: var(--input-bg);
+  --menu-hover: rgba(222, 220, 209, 0.08);
+  --menu-shadow: 0 8px 28px rgba(0, 0, 0, 0.40);
+  --t-muted: #a39d92; --t-good: #6fcf97; --t-warn: #e9b44c; --t-bad: #ff8f85; --t-blue: #7db4f5;
+  --t-green: #9ccf6a; --t-orange: #f29a5c; --t-purple: #d39bf0; --t-pink: #f58cbd; --t-teal: #5fcfd0;
+}
+
+/* hovered chat row: the active fill at 60% (DESIGN.md, derived) */
+body { --row-hover: color-mix(in srgb, var(--row-active) 60%, transparent); }
+
+/* ---------- a background picture (Settings > Background > Picture): the user's own file, behind a veil
+   of --bg so text stays readable ---------- */
+:root { --picture-scrim: 35%; }
+body[data-bg='picture'] { background: var(--bg) var(--bg-image, none) center / cover no-repeat; }
+body[data-bg='picture']::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: color-mix(in srgb, var(--bg) var(--picture-scrim), transparent); }
+
+/* The one red: Deny buttons and errors. */
+body { --red: var(--t-bad); }
+
+/* ---------- accents: --accent (fill: "+", send, avatar, jellyfish), --accent-text (as text and thin
+   lines), --on-accent (on the fill). #D97757 is the default; the 9 presets keep working. ---------- */
+body[data-theme='dark'][data-accent='default']  { --accent: #d97757; --accent-text: #d97757; --on-accent: #ffffff; }
+body[data-theme='ivory'][data-accent='default'] { --accent: #d97757; --accent-text: #9d4d2c; --on-accent: #ffffff; }
+/* the 9 presets (themes.ts ACCENTS) */
+body[data-theme='dark'][data-accent='cyan']    { --accent: #00e2e6; --accent-text: #00e2e6; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='cyan']   { --accent: #00e2e6; --accent-text: #007071; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='mint']    { --accent: #5edfa4; --accent-text: #5edfa4; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='mint']   { --accent: #5edfa4; --accent-text: #19714a; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='blue']    { --accent: #6cb2ff; --accent-text: #7db8ff; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='blue']   { --accent: #6cb2ff; --accent-text: #1f63b5; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='violet']  { --accent: #a99bff; --accent-text: #b3a7ff; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='violet'] { --accent: #a99bff; --accent-text: #5b4bc4; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='pink']    { --accent: #ffb7c5; --accent-text: #ffb7c5; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='pink']   { --accent: #ffb7c5; --accent-text: #af375e; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='coral']   { --accent: #ff9478; --accent-text: #ff9478; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='coral']  { --accent: #ff9478; --accent-text: #af3f1e; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='amber']   { --accent: #f4b740; --accent-text: #f4b740; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='amber']  { --accent: #f4b740; --accent-text: #8e5900; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='green']   { --accent: #069902; --accent-text: #06a802; --on-accent: #1d1c1a; }
+body[data-theme='ivory'][data-accent='green']  { --accent: #069902; --accent-text: #057502; --on-accent: #1d1c1a; }
+body[data-theme='dark'][data-accent='red']     { --accent: #c20000; --accent-text: #ff4d4d; --on-accent: #ffffff; }
+body[data-theme='ivory'][data-accent='red']    { --accent: #c20000; --accent-text: #c20000; --on-accent: #ffffff; }

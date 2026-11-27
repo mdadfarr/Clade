@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { contrastRatio, DEFAULT_DESIGN, fromV2, MIN_CONTRAST, OLD_FORMAT_NOTE, parseDesign, readDesign, TONES } from './design';
+import { contrastRatio, DEFAULT_DESIGN, fromV2, ICON_CONTRAST, MIN_CONTRAST, OLD_FORMAT_NOTE, parseDesign, readDesign, TONES } from './design';
 import { DEFAULT_DESIGN_V2 } from './design-v2';
 import { DEFAULT_DESIGN_V1 } from './design-v1';
 
@@ -14,25 +14,25 @@ const bad = (change: (d: any) => void, pattern: RegExp) => {
 
 test('v3: default design is valid', () => assert.deepStrictEqual(parseDesign(JSON.stringify(DEFAULT_DESIGN)), DEFAULT_DESIGN));
 
-test('v3: accent is cyan as a fill and in dark, a darker shade of it as text on light', () => {
+test('v3: the default accent is Clay #D97757 in both themes; as text on Ivory it is a darker shade', () => {
   const c = DEFAULT_DESIGN.colors;
-  assert.deepStrictEqual(c.tones.accent, { light: '#00787A', dark: '#00E2E6' });
-  assert.deepStrictEqual([c.light.accentFill, c.dark.accentFill], ['#00E2E6', '#00E2E6']);
-  assert.ok(contrastRatio('#00E2E6', c.light.background) < 2); // why cyan is never text on light
+  assert.deepStrictEqual(c.tones.accent, { light: '#9D4D2C', dark: '#D97757' });
+  assert.deepStrictEqual([c.light.accentFill, c.dark.accentFill], ['#D97757', '#D97757']);
+  assert.ok(contrastRatio('#D97757', c.light.background) < MIN_CONTRAST); // why the fill is never text on Ivory
   for (const th of ['light', 'dark'] as const) {
     assert.ok(contrastRatio(c.tones.accent[th], c[th].background) >= MIN_CONTRAST);
-    assert.ok(contrastRatio(c[th].accentOn, c[th].accentFill) >= MIN_CONTRAST);
+    assert.ok(contrastRatio(c[th].accentOn, c[th].accentFill) >= ICON_CONTRAST);
     for (const t of TONES) assert.ok(contrastRatio(c.tones[t][th], c[th].background) >= MIN_CONTRAST, `${t} ${th}`);
   }
 });
 
 test('v3: text on the accent fill must be readable', () =>
-  bad((d) => (d.colors.light.accentOn = '#ffffff'), /colors\.light\.accentOn has contrast \d\.\d on colors\.light\.accentFill/));
+  bad((d) => (d.colors.light.accentOn = '#d0d0d0'), /colors\.light\.accentOn has contrast \d\.\d on colors\.light\.accentFill/));
 
 test('v3: type and spacing scales are plain numbers with limits', () => {
   const t = DEFAULT_DESIGN.type;
   assert.ok(t.h1.size > t.h2.size && t.h2.size > t.h3.size && t.h3.size > t.h4.size - 1 && t.h4.size >= t.body && t.fx.size > t.h1.size);
-  assert.ok(t.body >= 19);
+  assert.deepStrictEqual([t.body, t.message, t.code], [17, 15, 13]); // DESIGN.md: Source Serif 17 replies, Geist 15 messages, Geist Mono 13
   bad((d) => (d.type.body = '19px'), /type\.body must be a number/);
   bad((d) => (d.type.h4 = 19), /type\.h4 must be an object/);
   bad((d) => (d.space.paragraph = -1), /space\.paragraph must be a number from 0 to 200/);
@@ -68,7 +68,7 @@ test('v3: a changed version 2 file keeps what was changed', () => {
   assert.deepStrictEqual([d.theme, d.type.body, d.type.h2, d.layout.chatWidth, d.effects.enabled], ['dark', 21, { size: 26, weight: 500 }, 900, false]);
   assert.deepStrictEqual(d.colors.tones.accent, { light: '#8a3aa8', dark: '#d39bf0' });
   assert.strictEqual(d.colors.dark.background, '#000000');
-  assert.strictEqual(d.colors.dark.accentFill, '#00E2E6'); // new keys get their defaults
+  assert.strictEqual(d.colors.dark.accentFill, '#D97757'); // new keys get their defaults
   assert.deepStrictEqual([d.type.h1, d.type.code, d.space], [DEFAULT_DESIGN.type.h1, DEFAULT_DESIGN.type.code, DEFAULT_DESIGN.space]); // untouched: new defaults
 });
 
@@ -87,10 +87,10 @@ test('effects: glow optional (0-1, default 0.5); an old dither key loads and is 
   assert.throws(() => parseDesign(withEffects({ enabled: true, fps: 60 })), /unknown key "fps"/);
   const old = parseDesign(withEffects({ enabled: true, dither: { variant: 'wave', speed: 1, dotSize: 5, cursorRadius: 90 } }, { size: 64, weight: 800 }));
   assert.deepStrictEqual(old.effects, { enabled: true, glow: 0.5 });
-  assert.deepStrictEqual(old.type.fx, { size: 88, weight: 800 });
+  assert.deepStrictEqual(old.type.fx, { size: 88, weight: 600 });
   // a size the user chose is kept, and without the old key 64 stays 64
   assert.strictEqual(parseDesign(withEffects({ enabled: true, dither: 'anything' }, { size: 70, weight: 800 })).type.fx.size, 70);
   assert.strictEqual(parseDesign(withEffects({ enabled: true }, { size: 64, weight: 800 })).type.fx.size, 64);
   assert.deepStrictEqual(DEFAULT_DESIGN.effects, { enabled: true, glow: 0.5 });
-  assert.deepStrictEqual(DEFAULT_DESIGN.type.fx, { size: 88, weight: 800 });
+  assert.deepStrictEqual(DEFAULT_DESIGN.type.fx, { size: 88, weight: 600 }); // DESIGN.md: weights 400-600 only
 });

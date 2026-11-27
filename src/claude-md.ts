@@ -265,7 +265,9 @@ If the file is invalid the app keeps the old design and shows an error.
     { "id": string, "side": "left" | "right" | "bottom", "size": number 50-800,
       "visible": true | false, "blocks": [ block, ... ] }
   ],
-  "look": { "accent": "cyan" | "mint" | "blue" | "violet" | "pink" | "coral" | "amber" | "green" | "red" }
+  "background": { "preset": "theme" | "claude" } or { "picture": "file name in backgrounds/" }
+            (optional; none = the theme's own background),
+  "look": { "accent": "default" | "cyan" | "mint" | "blue" | "violet" | "pink" | "coral" | "amber" | "green" | "red" }
             (optional)
 }
 \`\`\`
@@ -274,23 +276,27 @@ If the file is invalid the app keeps the old design and shows an error.
   themselves are in \`colors\`. Changing \`look\` alone changes no color.
   To switch the accent, ask the user to pick it in Settings (Cmd+comma).
   If you edit \`colors\` by hand, Settings shows "Custom".
+- \`background\`: what is behind the app. \`"theme"\` is the theme's own
+  background (\`"claude"\` is an old name for the same); \`{ "picture": "sea.jpg" }\` shows a picture from the project's
+  \`backgrounds/\` folder (png, jpg, webp or gif, a plain file name). To use a
+  new picture, put the file in \`backgrounds/\` first. The user can also pick one in
+  Settings > Background.
 - Colors are hex only: "#1f63b5" or "#abc". Every color has a light and a dark
   value; the user's theme picks one.
 - Readability is checked. \`text\`, \`mutedText\` and every tone must have a
   contrast of at least 4.5 against \`background\` in the same theme (\`userText\`
-  against \`userBubble\`, \`accentOn\` against \`accentFill\`). A file that fails is rejected with the key named, so
+  against \`userBubble\`; \`accentOn\` against \`accentFill\` needs 3, it is only icons). A file that fails is rejected with the key named, so
   when you change a background, check the text colors and tones too.
 - font names: letters, digits, spaces, commas, hyphens only, e.g. "Georgia, serif".
-- \`surface\` is the chat list, cards and the message box; \`raised\` is hover
-  and code block headers; \`border\` is every thin line.
+- \`surface\` is the chat list; \`raised\` is the open chat's row and hover; \`border\` is every thin line.
 - The accent has two forms. \`accentFill\` is the accent as a filled shape
   (send button, switches, selection) with \`accentOn\` as the text on it.
   \`tones.accent\` is the accent as text and thin lines, so its light value
   must be dark enough to read on the light background.
-- Flat colors only: there are no gradients in this app.
+- Flat colors only: there are no gradients, blur or glows in this app.
 - \`tones\` are the colors of the reply tags below, of code coloring (comment =
   muted, string = green, number = orange, keyword = purple) and of buttons
-  (Allow = good, Deny = bad, highlights = accent).
+  (Deny = bad, highlights = accent).
 - Panel block types (only these three):
   \`{ "type": "heading", "text": "..." }\`, \`{ "type": "text", "text": "..." }\`,
   \`{ "type": "list", "items": ["...", "..."] }\`

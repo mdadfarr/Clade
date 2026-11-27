@@ -26,7 +26,7 @@ run('iconutil', ['-c', 'icns', iconset, '-o', icns]);
 
 // 2. The app. No asar: index.html loads scripts from node_modules/ paths, node-pty needs its
 // spawn-helper as a real file, and the permission hook runs dist/hook.js by its path.
-const keep = /^\/(dist|node_modules|assets|index\.html|app\.css|help\.md|package\.json)(\/|$)/;
+const keep = /^\/(dist|node_modules|assets|index\.html|app\.css|tokens\.css|help\.md|package\.json)(\/|$)/;
 // node-pty parts this app never loads: Windows prebuilds and the C++ sources for building it.
 const unused = /^\/node_modules\/node-pty\/(prebuilds\/(win32|linux)-[^/]+|deps|third_party|src)(\/|$)/;
 const [built] = await packager({
