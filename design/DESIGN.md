@@ -1,60 +1,51 @@
 # Clade redesign v2: design spec
 
-This replaces the earlier glass spec. **No liquid glass anywhere.** No glows. Flat, warm, Anthropic-style.
+This replaces the earlier glass spec. **No liquid glass anywhere.** No glows. Flat, neutral, Anthropic-style.
 
 Source: Figma file "Clade — 3 design directions", frame "E — Ivory" (node 6:2).
 Reference window: **1440 × 900**. All px values are at that size.
 
 Two themes, one layout:
 
-- **Ivory** (light). Taken exactly from the Figma frame E. Default.
-- **Dark**. Must look exactly like the dark mode of the official Claude app (same layout as Ivory, Claude-app colors).
+- **Ivory** (light, default). Layout from the Figma frame E; colors sampled from Claude chat (white and neutral gray).
+- **Dark**. The dark mode of the official Claude app, colors sampled from it (same layout as Ivory).
 
 ---
 
 ## 1. Tokens
 
-### Ivory (exact, from Figma)
+Colors sampled from screenshots of Claude chat (converted to sRGB). They replace the first Figma Ivory and
+the Dark approximations. Ivory is now white and neutral gray (the theme keeps its name).
 
-| Token | Value | Used for |
-|---|---|---|
-| `--bg` | `#F7F6F1` | chat area background |
-| `--sidebar-bg` | `#EFEDE6` | sidebar background |
-| `--text-1` | `#1F1E1C` | primary text |
-| `--text-2` | `#5F5E58` | secondary text, inactive chat rows |
-| `--text-3` | `#97958C` | muted: "Recent", "Share", placeholder, model name |
-| `--accent` | `#D97757` | "+", send button, avatar |
-| `--on-accent` | `#FFFFFF` | text on accent |
-| `--row-active` | `#E4E1D6` | active chat row |
-| `--row-new` | `#E6E3D9` | "New chat" row |
-| `--row-hover` | `#E4E1D6` at 60% | hovered chat row (not in Figma; derived) |
-| `--user-bubble` | `#ECE9E0` | user message bubble |
-| `--code-bg` | `#EFEDE6` | code block fill |
-| `--border` | `#E3E0D6` | code block border, input border |
-| `--input-bg` | `#FFFFFF` | input box |
-| `--input-shadow` | Figma DROP_SHADOW, soft: use `0 4px 20px rgba(0,0,0,.06)` | input box |
+### Ivory (light, default) and Dark
 
-### Dark (Claude app dark mode)
+| Token | Dark | Ivory | Used for |
+|---|---|---|---|
+| `--bg` | `#191919` | `#FFFFFF` | chat area background |
+| `--sidebar-bg` | `#1F1F1F` | `#FAFAFA` | sidebar background |
+| `--input-bg` | `#303030` | `#FFFFFF` | input box; menus and permission cards too |
+| `--row-new`, `--row-active` | `#404040` | `#E0E0E0` | "New chat" row, open chat row (sampled from the "New" row) |
+| `--row-hover` | `--row-active` at 60% | same | hovered row (derived) |
+| `--text-1` | `#F0F0F0` | `#191919` | main text, sidebar items |
+| `--text-3` | `#9E9E9E` | `#646464` | muted: section labels, "Share", placeholder |
+| `--text-ctl` | `#9C9C9C` | `#666666` | muted: effort label, model name, the other input-box controls |
+| `--border` | `#414141` | `#DCDCDC` | input border, code block border, menus |
+| `--sidebar-divider` | `#302F2F` | `#E5E5E5` | 1 px line on the sidebar's right edge |
+| `--footer-divider` | `#3A3A3A` | `#DCDCDC` | 1 px line above the account at the sidebar bottom |
+| `--scrollbar` | `#6D6D6D` | `#B0B0B0` | scrollbar thumb |
+| `--accent` | `#D97757` | `#D97757` | logo/spark accent: "+", avatar, jellyfish |
+| `--send` | `#C6623F` | `#C6623F` | send button (default accent; other accents use their own fill) |
+| `--on-accent` | `#FFFFFF` | `#FFFFFF` | text on accent |
+| `--input-shadow` | `0 4px 20px rgba(0,0,0,.25)` | `0 4px 20px rgba(0,0,0,.06)` | input box |
 
-These are close approximations of the Claude app. **Do not trust them blindly.** If the user gives a screenshot of the Claude app in dark mode, sample the real colors from it and use those instead. Keep the same token names.
+Not sampled (kept, made neutral where the old warm value clashed):
 
-| Token | Approx. value |
-|---|---|
-| `--bg` | `#262624` |
-| `--sidebar-bg` | `#1F1E1D` |
-| `--text-1` | `#FAF9F5` |
-| `--text-2` | `#C2C0B6` |
-| `--text-3` | `#8F8D85` |
-| `--accent` | `#D97757` |
-| `--on-accent` | `#FFFFFF` |
-| `--row-active` | `#30302E` |
-| `--row-new` | `#2B2A28` |
-| `--row-hover` | `#30302E` at 60% |
-| `--user-bubble` | `#141413` |
-| `--code-bg` | `#1F1E1D` |
-| `--border` | `rgba(222,220,209,.15)` |
-| `--input-bg` | `#30302E` |
-| `--input-shadow` | `0 4px 20px rgba(0,0,0,.25)` |
+| Token | Dark | Ivory | Note |
+|---|---|---|---|
+| `--text-2` | `#C0C0C0` | `#5E5E5E` | secondary text; old `#C2C0B6` / `#5F5E58` at the same lightness |
+| `--user-bubble` | `#141413` | `#E9E9E9` | Ivory's old `#ECE9E0` at the same lightness |
+| `--code-bg` | `#1F1F1F` | `#FAFAFA` | = sidebar, as before |
+| `--accent-text` | `#D97757` | `#9D4D2C` | accent as text (unchanged) |
 
 The accent stays user-selectable (the 9 accent presets keep working). `#D97757` is only the default.
 Keep one red for Deny buttons and errors. That is the only extra color.
@@ -86,7 +77,7 @@ Default line-height is 155% unless stated. Only weights 400, 500 and 600 are use
 
 ## 2. Layout (from Figma)
 
-### Sidebar: width 272, fill `--sidebar-bg`, no border
+### Sidebar: width 272, fill `--sidebar-bg`, 1px `--sidebar-divider` on the right edge (drawn inside, nothing moves)
 
 - Padding: top 20, bottom 20, left/right 16. Item gap 2.
 - **Logo**: "Clade", padding-left 8. Then 20px space.
@@ -95,8 +86,8 @@ Default line-height is 155% unless stated. Only weights 400, 500 and 600 are use
 - **Chat rows**: height 38, padding 8 / 12, radius 8, Geist Regular 14, full width.
   - Active chat: fill `--row-active`, text `--text-1`.
   - Hovered chat: fill `--row-hover`, text `--text-1`.
-  - Others: no fill, text `--text-2`.
-- **Footer** (pinned to bottom): 28px circle `--accent` with initial "M" (Geist Medium 12, white), then name (Geist 14, `--text-2`). Gap 10, padding-left 8.
+  - Others: no fill, text `--text-1`.
+- **Footer** (pinned to bottom): 28px circle `--accent` with initial "M" (Geist Medium 12, white), then name (Geist 14, `--text-1`). Gap 10, padding-left 8. 1px `--footer-divider` above it.
 
 ### Chat area: 1168 × 900, fill `--bg`
 
@@ -111,7 +102,7 @@ Default line-height is 155% unless stated. Only weights 400, 500 and 600 are use
   - Fill `--input-bg`, 1px `--border`, radius 20, `--input-shadow`.
   - Padding: top 18, right 14, bottom 14, left 20. Gap 14 between rows.
   - Row 1: text field, Geist 15, placeholder `--text-3` ("Ask a follow-up…" in a chat, "How can I help?" on the new-chat screen).
-  - Row 2: model name left (Geist 13, `--text-3`). Send button right: 32 × 32, radius 10, fill `--accent`, "↑" Geist SemiBold 16 in `--on-accent`.
+  - Row 2: model name left (Geist 13, `--text-ctl`). Send button right: 32 × 32, radius 10, fill `--send`, "↑" Geist SemiBold 16 in `--on-accent`.
 
 ### Empty new-chat screen
 

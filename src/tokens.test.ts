@@ -19,15 +19,6 @@ function rule(selector: string): Record<string, string> {
   return out;
 }
 
-/** A token color as hex; an rgba() token is laid over the theme's --bg (how it is drawn). */
-function flat(v: string, bg: string): string {
-  const m = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/.exec(v);
-  if (!m) return v;
-  const a = +m[4];
-  const under = [1, 3, 5].map((i) => parseInt(bg.slice(i, i + 2), 16));
-  return '#' + [1, 2, 3].map((i, j) => Math.round(+m[i] * a + under[j] * (1 - a)).toString(16).padStart(2, '0')).join('');
-}
-
 test('tokens.css and the design.json copy in themes.ts hold the same surfaces', () => {
   for (const [theme, base] of [['dark', BASE.dark], ['ivory', BASE.light]] as const) {
     const r = rule(`body[data-theme='${theme}']`);
@@ -36,22 +27,22 @@ test('tokens.css and the design.json copy in themes.ts hold the same surfaces', 
       ['--row-active', base.raised], ['--raised', base.raised], ['--user-bubble', base.userBubble], ['--code-bg', base.codeBackground],
     ];
     for (const [k, v] of pairs) assert.strictEqual(r[k], v, `${theme} ${k}`);
-    assert.strictEqual(flat(r['--border'], r['--bg']), base.border, `${theme} border`);
+    assert.strictEqual(r['--border'], base.border, `${theme} border`);
   }
 });
 
-test('DESIGN.md values, exactly', () => {
+test('DESIGN.md values, exactly (sampled from Claude chat)', () => {
   const ivory = rule(`body[data-theme='ivory']`);
   const want: Record<string, string> = {
-    '--bg': '#f7f6f1', '--sidebar-bg': '#efede6', '--text-1': '#1f1e1c', '--text-2': '#5f5e58', '--text-3': '#97958c', '--row-active': '#e4e1d6',
-    '--row-new': '#e6e3d9', '--user-bubble': '#ece9e0', '--code-bg': '#efede6', '--border': '#e3e0d6', '--input-bg': '#ffffff',
+    '--bg': '#ffffff', '--sidebar-bg': '#fafafa', '--input-bg': '#ffffff', '--row-new': '#e0e0e0', '--row-active': '#e0e0e0', '--text-1': '#191919',
+    '--text-3': '#646464', '--text-ctl': '#666666', '--border': '#dcdcdc', '--sidebar-divider': '#e5e5e5', '--footer-divider': '#dcdcdc', '--scrollbar': '#b0b0b0',
     '--input-shadow': '0 4px 20px rgba(0, 0, 0, 0.06)',
   };
   for (const [k, v] of Object.entries(want)) assert.strictEqual(ivory[k], v, `ivory ${k}`);
   const dark = rule(`body[data-theme='dark']`);
   const wantDark: Record<string, string> = {
-    '--bg': '#262624', '--sidebar-bg': '#1f1e1d', '--text-1': '#faf9f5', '--text-2': '#c2c0b6', '--text-3': '#8f8d85', '--row-active': '#30302e',
-    '--row-new': '#2b2a28', '--user-bubble': '#141413', '--code-bg': '#1f1e1d', '--border': 'rgba(222, 220, 209, 0.15)', '--input-bg': '#30302e',
+    '--bg': '#191919', '--sidebar-bg': '#1f1f1f', '--input-bg': '#303030', '--row-new': '#404040', '--row-active': '#404040', '--text-1': '#f0f0f0',
+    '--text-3': '#9e9e9e', '--text-ctl': '#9c9c9c', '--border': '#414141', '--sidebar-divider': '#302f2f', '--footer-divider': '#3a3a3a', '--scrollbar': '#6d6d6d',
     '--input-shadow': '0 4px 20px rgba(0, 0, 0, 0.25)',
   };
   for (const [k, v] of Object.entries(wantDark)) assert.strictEqual(dark[k], v, `dark ${k}`);
@@ -60,6 +51,10 @@ test('DESIGN.md values, exactly', () => {
     assert.strictEqual(root[k], v, k);
   assert.strictEqual(rule(`body[data-theme='ivory'][data-accent='default']`)['--accent'], '#d97757');
   assert.strictEqual(rule(`body[data-theme='dark'][data-accent='default']`)['--accent'], '#d97757');
+  // the send button is a deeper shade of the default accent; with any other accent it is the accent
+  for (const t of ['ivory', 'dark']) assert.strictEqual(rule(`body[data-theme='${t}'][data-accent='default']`)['--send'], '#c6623f', t);
+  assert.match(tokens, /\nbody \{ --send: var\(--accent\); \}/);
+  assert.doesNotMatch(tokens, /--border:\s*rgba|#42413e/i); // the dark border is solid
 });
 
 test('tokens.css has every accent, with the fills and text shades of themes.ts', () => {
@@ -69,6 +64,7 @@ test('tokens.css has every accent, with the fills and text shades of themes.ts',
     const i = rule(`body[data-theme='ivory'][data-accent='${a}']`);
     assert.deepStrictEqual([g['--accent'], g['--accent-text'], g['--on-accent']], [s.fill, s.dark, s.on].map((x) => x.toLowerCase()), `${a} dark`);
     assert.deepStrictEqual([i['--accent'], i['--accent-text'], i['--on-accent']], [s.fillLight ?? s.fill, s.light, s.onLight ?? s.on].map((x) => x.toLowerCase()), `${a} ivory`);
+    for (const r of [g, i]) assert.strictEqual(r['--send'], s.send?.toLowerCase(), `${a} send`);
   }
 });
 

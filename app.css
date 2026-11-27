@@ -18,7 +18,7 @@ select, option, optgroup { color: var(--text-1); background-color: var(--surface
 body.dark ::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-corner { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
 
 /* ---- jellyfish video behind the chat area, on the empty new-chat screen only (DESIGN.md section 3).
    One file: white jellyfish on black. Video and accent overlay sit in one isolated layer, and the whole
@@ -38,10 +38,11 @@ body[data-theme='ivory'] #jelly .tint { mix-blend-mode: lighten; }
 #left, #right { display: flex; }
 #center { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
 
-/* ---- sidebar (DESIGN.md section 2): its own fill, no border. Logo, "New chat", "Recent", chat rows,
+/* ---- sidebar (DESIGN.md section 2): its own fill and a 1 px divider on its right (an inset shadow, so
+   nothing moves). Logo, "New chat", "Recent", chat rows,
    the account at the bottom. ---- */
 #sidebar { position: relative; width: var(--sidebar-width); flex-shrink: 0; box-sizing: border-box; display: flex; flex-direction: column; gap: var(--side-gap);
-  padding: var(--side-pad-top) var(--side-pad-x) var(--side-pad-bottom); background: var(--sidebar-bg); }
+  padding: var(--side-pad-top) var(--side-pad-x) var(--side-pad-bottom); background: var(--sidebar-bg); box-shadow: inset -1px 0 0 var(--sidebar-divider); }
 body.nosidebar #sidebar { display: none; }
 /* drag the right edge of the chat list to change its width */
 #sidegrip { position: absolute; top: 12px; bottom: 12px; right: -4px; width: 8px; cursor: col-resize; z-index: 5; }
@@ -69,13 +70,13 @@ body.sizing, body.sizing * { cursor: col-resize !important; user-select: none !i
   margin: 0 calc(-1 * var(--side-pad-x)); padding: 0 var(--side-pad-x) 12px; }
 /* the list's scrollbar shows only while the pointer is over the list */
 #chats::-webkit-scrollbar-thumb { background: transparent; }
-#chats:hover::-webkit-scrollbar-thumb { background: var(--border); background-clip: content-box; }
+#chats:hover::-webkit-scrollbar-thumb { background: var(--scrollbar); background-clip: content-box; }
 /* the list has its own hide button; the top bar's shows only while the list is hidden */
 @media (min-width: 1001px) { body:not(.sideclosed):not(.nosidebar) #sidetoggle { display: none; } }
 .chatempty { padding: 8px var(--label-pad-left); color: var(--text-3); font-size: var(--small-size); }
 /* sidebar bottom: avatar circle (accent, white initial) and name; its menu opens above it */
-#acctwrap { position: relative; padding-top: 12px; }
-#acct { display: flex; align-items: center; gap: var(--foot-gap); width: 100%; padding: 4px 8px 4px var(--foot-pad-left); border: 0; border-radius: var(--r-row); background: none; color: var(--text-2); text-align: left; cursor: pointer; font: var(--w-regular) var(--ui-size)/var(--lh) var(--font-ui); }
+#acctwrap { position: relative; padding-top: 12px; box-shadow: inset 0 1px 0 var(--footer-divider); } /* the footer divider */
+#acct { display: flex; align-items: center; gap: var(--foot-gap); width: 100%; padding: 4px 8px 4px var(--foot-pad-left); border: 0; border-radius: var(--r-row); background: none; color: var(--text-1); text-align: left; cursor: pointer; font: var(--w-regular) var(--ui-size)/var(--lh) var(--font-ui); }
 #acct:hover, #acct[aria-expanded=true] { background: var(--row-hover); color: var(--text-1); }
 #accticon { display: flex; align-items: center; justify-content: center; width: var(--avatar-size); height: var(--avatar-size); flex-shrink: 0; border-radius: var(--r-round); background: var(--accent); color: var(--on-accent); font: var(--w-medium) var(--label-size)/1 var(--font-ui); }
 #accticon:empty::before { content: ''; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; }
@@ -122,7 +123,7 @@ body.sizing, body.sizing * { cursor: col-resize !important; user-select: none !i
 .chatgroup svg { display: none; }
 /* a chat: one line; the open chat is filled, the hovered one lightly filled */
 .chatrow { flex-shrink: 0; display: flex; align-items: center; gap: 8px; width: 100%; height: var(--row-height); box-sizing: border-box; padding: var(--row-pad-y) var(--row-pad-x); border: 0; border-radius: var(--r-row);
-  background: none; color: var(--text-2); font: var(--w-regular) var(--ui-size)/var(--row-lh) var(--font-ui); text-align: left; cursor: pointer; }
+  background: none; color: var(--text-1); font: var(--w-regular) var(--ui-size)/var(--row-lh) var(--font-ui); text-align: left; cursor: pointer; }
 .chatrow:hover { background: var(--row-hover); color: var(--text-1); }
 .chatrow.current { background: var(--row-active); color: var(--text-1); }
 body.newchat .chatrow.current { display: none; } /* the empty chat of the new-chat screen: "New chat" stands for it */
@@ -410,13 +411,13 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .controls .grow { flex: 1; }
 .controls .modelbtn { order: -1; } /* the model first, as in DESIGN.md; the other pickers after it */
 .controls .send { order: 1; }
-.ctl { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border: 0; border-radius: var(--r-small); background: none; color: var(--text-3); font: var(--w-regular) var(--meta-size)/1.2 var(--font-ui); white-space: nowrap; cursor: pointer; }
+.ctl { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border: 0; border-radius: var(--r-small); background: none; color: var(--text-ctl); font: var(--w-regular) var(--meta-size)/1.2 var(--font-ui); white-space: nowrap; cursor: pointer; }
 .ctl:hover, .ctl.open { background: var(--row-hover); color: var(--text-1); }
 .ctl[aria-disabled=true] { opacity: 0.45; cursor: default; background: none; }
 .ctl.warn { color: var(--accent-text); }
 .ctl svg { flex-shrink: 0; }
 .send { display: flex; align-items: center; justify-content: center; width: var(--send-size); height: var(--send-size); margin-left: 4px; padding: 0; border: 0; border-radius: var(--r-send);
-  background: var(--accent); color: var(--on-accent); cursor: pointer; flex-shrink: 0; }
+  background: var(--send); color: var(--on-accent); cursor: pointer; flex-shrink: 0; }
 .send svg { width: var(--send-glyph); height: var(--send-glyph); stroke-width: 2; }
 .send:disabled { cursor: default; }
 /* The empty new-chat screen: the heading over the input box, both centered; the box from about y 463

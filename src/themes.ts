@@ -17,13 +17,21 @@ export interface AccentSet {
   on: string; // text and icons on the fill
   fillLight?: string; // the fill in Ivory, when it differs from the fill in Dark
   onLight?: string;
+  send?: string; // the send button's fill, when it differs from the fill
 }
 
-// The one set of surfaces: Ivory (light) and Dark (the Claude app's dark mode), from design/DESIGN.md. These
-// are the copy design.json holds; the page draws from tokens.css, which has the same values (tokens.test.ts
-// keeps the two equal). surface is the sidebar, raised the active row. Dark's border is DESIGN.md's
-// rgba(222,220,209,.15) laid over --bg (design.json colors are hex only).
+// The one set of surfaces: Ivory (light: white and neutral gray) and Dark (the Claude app's dark mode),
+// sampled from Claude chat (design/DESIGN.md). These are the copy design.json holds; the page draws from
+// tokens.css, which has the same values (tokens.test.ts keeps the two equal). surface is the sidebar, raised
+// the highlighted row.
 export const BASE: { light: Surface; dark: Surface } = {
+  light: { background: '#ffffff', surface: '#fafafa', raised: '#e0e0e0', border: '#dcdcdc', text: '#191919', mutedText: '#5e5e5e', userBubble: '#e9e9e9', userText: '#191919', codeBackground: '#fafafa' },
+  dark: { background: '#191919', surface: '#1f1f1f', raised: '#404040', border: '#414141', text: '#f0f0f0', mutedText: '#c0c0c0', userBubble: '#141413', userText: '#f0f0f0', codeBackground: '#1f1f1f' },
+};
+
+// The first Ivory and Dark (DESIGN.md v2's Figma values and approximations). A file written with them counts
+// as its accent, so the sampled colors reach it without the file being rewritten.
+export const IVORY_V2: { light: Surface; dark: Surface } = {
   light: { background: '#f7f6f1', surface: '#efede6', raised: '#e4e1d6', border: '#e3e0d6', text: '#1f1e1c', mutedText: '#5f5e58', userBubble: '#ece9e0', userText: '#1f1e1c', codeBackground: '#efede6' },
   dark: { background: '#262624', surface: '#1f1e1d', raised: '#30302e', border: '#42413e', text: '#faf9f5', mutedText: '#c2c0b6', userBubble: '#141413', userText: '#faf9f5', codeBackground: '#1f1e1d' },
 };
@@ -31,8 +39,8 @@ export const BASE: { light: Surface; dark: Surface } = {
 // The background presets in Settings: the two themes' own backgrounds (picking one sets the theme too).
 // A picture of the user's own is the third choice (design.json "background").
 export const BACKGROUNDS = [
-  { id: 'ivory', label: 'Ivory', color: '#f7f6f1', theme: 'light' },
-  { id: 'dark', label: 'Dark', color: '#262624', theme: 'dark' },
+  { id: 'ivory', label: 'Ivory', color: '#ffffff', theme: 'light' },
+  { id: 'dark', label: 'Dark', color: '#191919', theme: 'dark' },
 ] as const;
 
 // The liquid-glass surfaces (never shipped; a file written while testing them counts as its accent).
@@ -49,7 +57,7 @@ export const PAPER: { light: Surface; dark: Surface } = {
 };
 
 export const ACCENTS: Record<AccentName, AccentSet> = {
-  default: { label: 'Clay', fill: '#D97757', light: '#9D4D2C', dark: '#D97757', on: '#FFFFFF' },
+  default: { label: 'Clay', fill: '#D97757', light: '#9D4D2C', dark: '#D97757', on: '#FFFFFF', send: '#C6623F' },
   cyan: { label: 'Cyan', fill: '#00E2E6', light: '#007071', dark: '#00E2E6', on: '#1d1c1a' },
   mint: { label: 'Mint', fill: '#5EDFA4', light: '#19714A', dark: '#5EDFA4', on: '#1d1c1a' },
   blue: { label: 'Blue', fill: '#6CB2FF', light: '#1F63B5', dark: '#7DB8FF', on: '#1d1c1a' },
@@ -120,6 +128,7 @@ const matches = (d: Design, c: ReturnType<typeof lookColors>) =>
 export function matchLook(d: Design): Look | 'custom' {
   const look = d.look ?? DEFAULT_LOOK;
   if (matches(d, lookColors(look))) return look;
+  if (matches(d, lookColors(look, IVORY_V2))) return look; // written with the first Ivory and Dark
   if (look.accent !== 'default') {
     // written before the redesign: Paper surfaces and the accent's old text shade
     const paper = lookColors(look, PAPER);

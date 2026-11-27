@@ -1,6 +1,6 @@
 /* Clade design tokens: every value from design/DESIGN.md, in one place. Components (app.css) read only
    these variables. Two themes, Ivory (light, default) and Dark (Claude app dark), set on <body data-theme>;
-   the accent is <body data-accent> (renderer.ts sets both). No glass, no blur, no glows: flat warm colors,
+   the accent is <body data-accent> (renderer.ts sets both). No glass, no blur, no glows: flat neutral colors,
    1 px borders, one soft shadow (the input box).
 
    design.json still wins: renderer.ts puts every value the user changed there (fonts, sizes, spacing,
@@ -121,25 +121,29 @@
   --video-fade: 400ms;
 }
 
-/* ---------- Ivory (light, default): exact, from the Figma frame "E — Ivory" ---------- */
+/* ---------- Ivory (light, default): white and neutral gray, sampled from Claude chat (DESIGN.md) ---------- */
 body[data-theme='ivory'] {
   color-scheme: light;
-  --bg: #f7f6f1;
-  --sidebar-bg: #efede6;
-  --text-1: #1f1e1c;
-  --text-2: #5f5e58;
-  --text-3: #97958c;
-  --row-active: #e4e1d6;
-  --row-new: #e6e3d9;
-  --user-bubble: #ece9e0;
+  --bg: #ffffff;
+  --sidebar-bg: #fafafa;
+  --text-1: #191919;        /* main text, sidebar items */
+  --text-2: #5e5e5e;        /* secondary text (not sampled: the old value made neutral) */
+  --text-3: #646464;        /* muted: section labels, placeholder, "Share" */
+  --text-ctl: #666666;      /* muted: effort label and the other input-box controls */
+  --row-active: #e0e0e0;
+  --row-new: #e0e0e0;
+  --user-bubble: #e9e9e9;   /* not sampled: the old value made neutral */
   --user-fg: var(--text-1);
-  --code-bg: #efede6;
-  --border: #e3e0d6;
+  --code-bg: #fafafa;       /* = sidebar, as before */
+  --border: #dcdcdc;        /* input border, code block border */
+  --sidebar-divider: #e5e5e5;
+  --footer-divider: #dcdcdc;
+  --scrollbar: #b0b0b0;
   --input-bg: #ffffff;
   --input-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
   /* not in DESIGN.md: menus, popovers, cards, small hover tints */
-  --surface: #efede6;       /* = sidebar (design.json "surface") */
-  --raised: #e4e1d6;        /* = active row (design.json "raised") */
+  --surface: #fafafa;       /* = sidebar (design.json "surface") */
+  --raised: #e0e0e0;        /* = highlighted row (design.json "raised") */
   --menu-bg: var(--input-bg);
   --menu-hover: color-mix(in srgb, var(--row-active) 60%, transparent);
   --menu-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
@@ -148,24 +152,28 @@ body[data-theme='ivory'] {
   --t-green: #39711d; --t-orange: #a7460b; --t-purple: #8a3aa8; --t-pink: #b02d73; --t-teal: #0f7073;
 }
 
-/* ---------- Dark: the Claude app's dark mode (DESIGN.md approximations; same layout as Ivory) ---------- */
+/* ---------- Dark: the Claude app's dark mode, sampled from Claude chat (DESIGN.md; same layout as Ivory) ---------- */
 body[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #262624;
-  --sidebar-bg: #1f1e1d;
-  --text-1: #faf9f5;
-  --text-2: #c2c0b6;
-  --text-3: #8f8d85;
-  --row-active: #30302e;
-  --row-new: #2b2a28;
+  --bg: #191919;
+  --sidebar-bg: #1f1f1f;
+  --text-1: #f0f0f0;        /* main text, sidebar items */
+  --text-2: #c0c0c0;        /* secondary text (not sampled: the old value made neutral) */
+  --text-3: #9e9e9e;        /* muted: section labels, placeholder, "Share" */
+  --text-ctl: #9c9c9c;      /* muted: effort label and the other input-box controls */
+  --row-active: #404040;
+  --row-new: #404040;
   --user-bubble: #141413;
   --user-fg: var(--text-1);
-  --code-bg: #1f1e1d;
-  --border: rgba(222, 220, 209, 0.15);
-  --input-bg: #30302e;
+  --code-bg: #1f1f1f;       /* = sidebar, as before */
+  --border: #414141;        /* input border, code block border */
+  --sidebar-divider: #302f2f;
+  --footer-divider: #3a3a3a;
+  --scrollbar: #6d6d6d;
+  --input-bg: #303030;
   --input-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-  --surface: #1f1e1d;
-  --raised: #30302e;
+  --surface: #1f1f1f;
+  --raised: #404040;
   --menu-bg: var(--input-bg);
   --menu-hover: rgba(222, 220, 209, 0.08);
   --menu-shadow: 0 8px 28px rgba(0, 0, 0, 0.40);
@@ -187,9 +195,11 @@ body[data-bg='picture']::before { content: ''; position: fixed; inset: 0; z-inde
 body { --red: var(--t-bad); }
 
 /* ---------- accents: --accent (fill: "+", send, avatar, jellyfish), --accent-text (as text and thin
-   lines), --on-accent (on the fill). #D97757 is the default; the 9 presets keep working. ---------- */
-body[data-theme='dark'][data-accent='default']  { --accent: #d97757; --accent-text: #d97757; --on-accent: #ffffff; }
-body[data-theme='ivory'][data-accent='default'] { --accent: #d97757; --accent-text: #9d4d2c; --on-accent: #ffffff; }
+   lines), --on-accent (on the fill), --send (the send button: the accent, but #C6623F for the default).
+   #D97757 is the default; the 9 presets keep working. ---------- */
+body { --send: var(--accent); }
+body[data-theme='dark'][data-accent='default']  { --accent: #d97757; --accent-text: #d97757; --on-accent: #ffffff; --send: #c6623f; }
+body[data-theme='ivory'][data-accent='default'] { --accent: #d97757; --accent-text: #9d4d2c; --on-accent: #ffffff; --send: #c6623f; }
 /* the 9 presets (themes.ts ACCENTS) */
 body[data-theme='dark'][data-accent='cyan']    { --accent: #00e2e6; --accent-text: #00e2e6; --on-accent: #1d1c1a; }
 body[data-theme='ivory'][data-accent='cyan']   { --accent: #00e2e6; --accent-text: #007071; --on-accent: #1d1c1a; }

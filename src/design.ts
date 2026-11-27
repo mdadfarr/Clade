@@ -137,6 +137,7 @@ export function designOverrides(d: Design, theme: 'light' | 'dark'): Record<stri
     // the DESIGN.md tokens that stand for a role: the sidebar is the surface, its row fills are raised
     out['--sidebar-bg'] = r.surface;
     out['--row-active'] = out['--row-new'] = r.raised;
+    out['--send'] = r.accentFill;
     out['--accent-text'] = d.colors.tones.accent[theme];
   }
   return out;

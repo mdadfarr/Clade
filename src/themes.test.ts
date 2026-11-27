@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert';
 import { contrastRatio, DEFAULT_DESIGN, ICON_CONTRAST, parseDesign, Roles, TONES } from './design';
-import { ACCENT_NAMES, ACCENTS, applyLook, BASE, DEFAULT_LOOK, GLASS, lookColors, matchLook, PAPER } from './themes';
+import { ACCENT_NAMES, ACCENTS, applyLook, BASE, DEFAULT_LOOK, GLASS, IVORY_V2, lookColors, matchLook, PAPER } from './themes';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -68,7 +68,7 @@ test('picking writes exactly the stored values and the accent name; nothing else
 test('the default design is the base surfaces with the default accent (Clay #D97757), and reset brings it back', () => {
   assert.deepStrictEqual(DEFAULT_LOOK, { accent: 'default' });
   assert.deepStrictEqual([DEFAULT_DESIGN.colors.dark.accentFill, DEFAULT_DESIGN.colors.light.accentFill], ['#D97757', '#D97757']);
-  assert.deepStrictEqual([DEFAULT_DESIGN.colors.dark.background, DEFAULT_DESIGN.colors.light.background], ['#262624', '#f7f6f1']);
+  assert.deepStrictEqual([DEFAULT_DESIGN.colors.dark.background, DEFAULT_DESIGN.colors.light.background], ['#191919', '#ffffff']);
   assert.deepStrictEqual(matchLook(DEFAULT_DESIGN), DEFAULT_LOOK);
   assert.deepStrictEqual(applyLook(applyLook(DEFAULT_DESIGN, { accent: 'green' }), DEFAULT_LOOK), DEFAULT_DESIGN);
 });
@@ -169,4 +169,14 @@ test('a file written during the glass trial counts as its accent, so the page us
   d.colors.dark = { ...GLASS.dark, accentFill: '#7DD3FC', accentOn: '#06101F' };
   d.colors.tones.accent = { light: '#9D4D2C', dark: '#7DD3FC' };
   assert.deepStrictEqual(matchLook(d), { accent: 'default' });
+});
+
+test('a file written with the first Ivory and Dark (DESIGN.md v2) counts as its accent, so the sampled colors reach it', () => {
+  for (const accent of ACCENT_NAMES) {
+    const d = applyLook(DEFAULT_DESIGN, { accent });
+    d.colors.light = { ...d.colors.light, ...IVORY_V2.light };
+    d.colors.dark = { ...d.colors.dark, ...IVORY_V2.dark };
+    assert.deepStrictEqual(matchLook(d), { accent }, accent);
+    assert.deepStrictEqual(matchLook(parseDesign(JSON.stringify(d))), { accent }, `${accent} loads`);
+  }
 });
