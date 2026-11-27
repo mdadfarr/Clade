@@ -624,7 +624,13 @@ body.panedrag, body.panedrag * { cursor: grabbing !important; user-select: none 
 .gnode.here rect { stroke: var(--accent-text); stroke-width: 1; stroke-dasharray: 3 2; }
 .gtree { fill: var(--text-2); font: 600 12px var(--font-ui); pointer-events: none; }
 #graphpop { position: absolute; max-width: 320px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.18); }
-.gfirst { margin-bottom: 6px; overflow-wrap: anywhere; }
+.gfirst { margin-bottom: 6px; overflow-wrap: anywhere; max-height: 220px; overflow: hidden; line-height: 1.45; }
+/* the reply's start, drawn as in the chat but small */
+.gfirst > :first-child { margin-top: 0; }
+.gfirst > :last-child { margin-bottom: 0; }
+.gfirst p, .gfirst ul, .gfirst ol, .gfirst pre, .gfirst .katex-display { margin: 0 0 6px; }
+.gfirst h1, .gfirst h2, .gfirst h3, .gfirst h4 { margin: 0 0 4px; font-size: 13px; }
+.gfirst .katex-display { overflow: hidden; }
 .gbranch { padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); cursor: pointer; }
 .gbranch:disabled { opacity: 0.4; cursor: default; }
 

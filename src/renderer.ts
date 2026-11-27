@@ -527,7 +527,7 @@ function createPane(id: string): PaneView {
     messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' });
   });
   new ResizeObserver(toBottom).observe(messages); // pane or terminal strip resized
-  new ResizeObserver(toBottom).observe(itemsEl); // content grew (new message, fonts loaded)
+  new ResizeObserver(() => (held ? holdReply() : toBottom())).observe(itemsEl); // content grew (new message, fonts loaded)
   let fitFrame = 0;
   new ResizeObserver(() => {
     if (!fitFrame) fitFrame = requestAnimationFrame(() => {
@@ -552,6 +552,7 @@ function createPane(id: string): PaneView {
 
   function renderChat(): void {
     const keep = stick;
+    const top = messages.scrollTop; // emptying the list scrolls it to the top: put it back after
     itemsEl.replaceChildren();
     // Claude's side of each exchange goes in one .reply box, with the action row under its last item.
     const groups = new Map<number, HTMLElement>();
@@ -589,8 +590,10 @@ function createPane(id: string): PaneView {
     readPreview();
     if (before && !livePreview) Array.from(itemsEl.querySelectorAll('.claude')).at(-1)?.classList.add('landed'); // the real text took the preview's place
     stick = keep;
+    if (!keep) messages.scrollTop = top;
     toBottom();
     scrollToReply();
+    holdReply();
     renderHead();
     railFor = null;
     updateRail();
@@ -775,15 +778,31 @@ function createPane(id: string): PaneView {
   // ---- a reply to scroll to once its chat is on screen (from the graph) ----
   let wantReply = '';
   let scrollUntil = 0;
+  // The reply scrolled to stays at the top while the chat around it still settles (math, pictures and fonts
+  // change heights; the chat may be drawn again), until the user scrolls or a few seconds pass.
+  let held: { reply: string; until: number } | null = null;
+  function holdReply(): void {
+    if (!held) return;
+    if (Date.now() > held.until) return void (held = null);
+    const reply = held.reply;
+    const group = Array.from(itemsEl.querySelectorAll<HTMLElement>(':scope > .reply')).find((g) => g.dataset.reply === reply);
+    if (!group) return;
+    const target = (group.previousElementSibling as HTMLElement | null) ?? group; // the user message above the reply
+    stick = false;
+    messages.scrollTop += target.getBoundingClientRect().top - messages.getBoundingClientRect().top;
+  }
+  const letGo = () => (held = null);
+  messages.addEventListener('wheel', letGo, { passive: true });
+  messages.addEventListener('pointerdown', letGo);
+  messages.addEventListener('keydown', letGo);
   function scrollToReply(): void {
     if (!wantReply) return;
     if (Date.now() > scrollUntil) return void (wantReply = '');
     const group = Array.from(itemsEl.querySelectorAll<HTMLElement>(':scope > .reply')).find((g) => g.dataset.reply === wantReply);
     if (!group) return;
     wantReply = '';
-    const target = (group.previousElementSibling as HTMLElement | null) ?? group; // the user message above the reply
-    target.scrollIntoView({ block: 'start' });
-    stick = false;
+    held = { reply: group.dataset.reply ?? '', until: Date.now() + 3000 };
+    holdReply();
     group.classList.add('flash');
     setTimeout(() => group.classList.remove('flash'), 1200);
   }
@@ -1973,7 +1992,9 @@ function showPop(n: GNode): void {
   if (popNode === n && !gpop.hidden) return;
   popNode = n;
   gpop.replaceChildren();
-  add(gpop, 'div', 'gfirst').textContent = n.first || '(no text)';
+  const first = add(gpop, 'div', 'gfirst');
+  if (n.first) renderMarkdown(first, n.first, look); // LaTeX, colors and the rest, as in the chat
+  else first.textContent = '(no text)';
   const b = add(gpop, 'button', 'gbranch') as HTMLButtonElement;
   b.textContent = 'Branch from here';
   const target = paneForNode(n);

@@ -15,7 +15,7 @@ export interface GraphNode {
   parent: string | null; // node id of the previous reply
   beside: string | null; // for a root that is a Retry of a first reply: the root it replaces
   label: string;
-  first: string; // first line of the reply, for the hover
+  first: string; // the start of the reply (markdown), for the hover
   created: string;
   canBranch: boolean; // the reply has a fork point (false while it is still being written)
 }
@@ -25,7 +25,23 @@ export interface Graph {
   current: string | null; // the shown session's newest reply
 }
 
-const firstLine = (s: string) => (s.split('\n').find((l) => l.trim()) ?? '').trim().slice(0, 300);
+/** The start of a reply, for the hover: whole blocks (a $$ math block or a code fence is never cut) until
+ *  about 280 characters or 12 lines, so it renders as markdown the way the chat does. */
+function preview(src: string): string {
+  const out: string[] = [];
+  let math = false, fence = false, size = 0;
+  for (const line of src.replace(/^\s*\n/, '').split('\n')) {
+    const t = line.trim();
+    const open = math || fence;
+    if (!open && !t && (size >= 280 || out.length >= 12)) break; // stop at a block's end
+    if (!open && out.length >= 24) break;
+    out.push(line);
+    size += line.length;
+    if (t.startsWith('```')) fence = !fence;
+    else if (!fence && (t.match(/\$\$/g)?.length ?? 0) % 2) math = !math;
+  }
+  return out.join('\n').trim();
+}
 
 export function buildGraph(sessions: { id: string; chat: Chat | null }[], branches: Branch[], currentSession: string): Graph {
   const chats = new Map(sessions.map((s) => [s.id, s.chat]));
@@ -72,7 +88,7 @@ export function buildGraph(sessions: { id: string; chat: Chat | null }[], branch
         parent: prev,
         beside: beside ? (nodeOfReply.get(beside) ?? null) : null,
         label: r.label,
-        first: firstLine(r.copy),
+        first: preview(r.copy),
         created: r.created,
         canBranch: !!r.forkUuid,
       };
