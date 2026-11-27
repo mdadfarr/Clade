@@ -339,19 +339,44 @@ function updateNewChat(): void {
   video.addEventListener('playing', () => box.classList.add('ready'));
 })();
 
-// ---- the dive: the first message of a new chat. One tall underwater scene: the camera starts on the
-// jellyfish, and the Reply box (the real message box) waits one view further down. On send the camera dives
-// (CAMERA_MS): the jellyfish (or a picture wallpaper) and the greeting leave through the top while the Reply
-// box comes up from the bottom edge, all by the same distance on every frame. The box that held the
-// message stays still; WAIT_MS after the last visible part of the jellyfish has left the view, it travels
-// (TRAVEL_MS) into the message's bubble (createPane: startDive). The scene exists only in single-pane mode. ----
+// ---- the dive: the first message of a new chat. On send the camera dives (CAMERA_MS): the jellyfish (or a
+// picture wallpaper) and the greeting leave through the top. The box that held the message stays still;
+// WAIT_MS after the last visible part of the jellyfish has left the view, it travels (TRAVEL_MS) into the
+// message's bubble. The Reply box (the real message box) waits just below the bottom edge; once the middle
+// box's controls have faded it rises, at the jellyfish's average speed where there is time, and lands on the
+// same frame as the middle box (createPane: startDive). Every motion uses one water curve (waterEase). The
+// scene exists only in single-pane mode. ----
 const CAMERA_MS = 1400;
 const WAIT_MS = 200; // after the jellyfish is gone, before the message's box moves (with TRAVEL_MS: 4:13)
 const TRAVEL_MS = 650;
-const easeInOutCubic = (t: number) => {
-  const x = Math.min(1, Math.max(0, t));
-  return x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2;
+/** cubic-bezier(x1, 0, x2, 1) as a function of time 0..1. */
+function bezier(x1: number, x2: number): (t: number) => number {
+  const at = (a: number, b: number, s: number) => 3 * (1 - s) * (1 - s) * s * a + 3 * (1 - s) * s * s * b + s * s * s;
+  return (t) => {
+    const x = Math.min(1, Math.max(0, t));
+    let lo = 0, hi = 1, s = x;
+    for (let i = 0; i < 24; i++) {
+      s = (lo + hi) / 2;
+      if (at(x1, x2, s) < x) lo = s;
+      else hi = s;
+    }
+    return at(0, 1, s);
+  };
+}
+// Descending in water, fitted to Krillion's dive (both descents of a 60 fps recording): a short gentle start,
+// fast through the middle (65% of the way at half the time), then a long glide to a stop.
+const waterEase = bezier(0.45, 0.35);
+/** The time (0..1) at which a water motion has covered share p of its way. */
+const waterAt = (p: number) => {
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 24; i++) {
+    const m = (lo + hi) / 2;
+    if (waterEase(m) < p) lo = m;
+    else hi = m;
+  }
+  return (lo + hi) / 2;
 };
+const PARTS_GONE = waterAt(0.5); // the controls fade out over the first half of the travel (opacity 1 - 2q)
 const lerp = (a: number, b: number, p: number) => a + (b - a) * p;
 /** Starts the scene's part: what moves with the camera behind the pane ('' in split panes: nothing). */
 function diveSceneStart(): 'jelly' | 'picture' | '' {
@@ -965,7 +990,7 @@ function createPane(id: string): PaneView {
   // Everything is measured from the real layout, the start before anything changes. ----
   type Part = { el: HTMLElement; x: number; y: number; fromBottom: boolean }; // a piece of the middle box, placed in it
   type DiveStart = { box: DOMRect; radius: number; text: DOMRect; scroll: number; parts: Part[]; hello: { text: string; rect: DOMRect } | null; scene: 'jelly' | 'picture' | '' };
-  type Dive = DiveStart & { raf: number; t0: number; pane: DOMRect; w0: number; goneAt: number; layer: HTMLElement; mid: HTMLElement; clip: HTMLElement; inner: HTMLElement; src: Element | null; offset: number; anchor: number; helloEl: HTMLElement | null; shadow: string };
+  type Dive = DiveStart & { raf: number; t0: number; pane: DOMRect; w0: number; goneAt: number; lift: number; layer: HTMLElement; mid: HTMLElement; clip: HTMLElement; inner: HTMLElement; src: Element | null; offset: number; anchor: number; helloEl: HTMLElement | null; shadow: string };
   function measureDive(): DiveStart {
     const box = composer.getBoundingClientRect();
     const at = (e: HTMLElement, fromBottom = false): Part => {
@@ -1007,7 +1032,7 @@ function createPane(id: string): PaneView {
     for (const p of d.parts) mid.appendChild(p.el);
     const clip = add(mid, 'div', 'midclip');
     const inner = add(clip, 'div', 'user flyinner');
-    fly = { ...d, raf: 0, t0: performance.now(), pane: P, w0: 0, goneAt: 0, layer, mid, clip, inner, src: null, offset: 0, anchor: -1, helloEl, shadow: getComputedStyle(composer).boxShadow };
+    fly = { ...d, raf: 0, t0: performance.now(), pane: P, w0: 0, goneAt: 0, lift: 0, layer, mid, clip, inner, src: null, offset: 0, anchor: -1, helloEl, shadow: getComputedStyle(composer).boxShadow };
     diveFrame(fly.t0); // the first frame is drawn now, before the new layout is ever painted
   }
   function diveFrame(now: number): void {
@@ -1016,10 +1041,9 @@ function createPane(id: string): PaneView {
     const P = el.getBoundingClientRect();
     const V = P.height; // one view: how far the camera goes
     const cam = (now - f.t0) / CAMERA_MS;
-    const d = V * easeInOutCubic(cam);
-    // the camera: the scene and the greeting up, the Reply box up from one view below, all by d
+    const d = V * waterEase(cam);
+    // the camera: the scene and the greeting up by d
     if (f.scene) diveSceneMove(d);
-    composerwrap.style.transform = cam < 1 ? `translateY(${V - d}px)` : '';
     // The start stays where it was within this pane: if the pane moves or changes size meanwhile (window,
     // split, chat list), the start goes with it, horizontally from the pane's center, vertically in proportion.
     if (!f.w0) f.w0 = composer.offsetWidth;
@@ -1039,7 +1063,21 @@ function createPane(id: string): PaneView {
         if (f.scene === 'jelly') (byId('jelly').querySelector('video') as HTMLVideoElement).pause(); // nothing of it shows any more
       }
     }
-    const q = f.goneAt ? easeInOutCubic((now - f.goneAt - WAIT_MS) / TRAVEL_MS) : 0;
+    const q = f.goneAt ? waterEase((now - f.goneAt - WAIT_MS) / TRAVEL_MS) : 0;
+    // The Reply box: just out of sight below the pane until the middle box's controls are gone, then up so
+    // it lands with the middle box. Its way, at the jellyfish's average speed (V per CAMERA_MS), takes
+    // CAMERA_MS * D / V; if that does not fit between the controls going and the landing, it starts as the
+    // controls go and moves a little faster.
+    const wrapTop = composerwrap.getBoundingClientRect().top - f.lift; // where it sits without the shift
+    const D = Math.max(0, P.bottom - wrapTop) + 24; // + the input shadow's reach above the box
+    let lift = D;
+    if (f.goneAt) {
+      const landAt = f.goneAt + WAIT_MS + TRAVEL_MS;
+      const start = Math.max(f.goneAt + WAIT_MS + TRAVEL_MS * PARTS_GONE, landAt - (CAMERA_MS * D) / V);
+      lift = D * (1 - waterEase((now - start) / (landAt - start)));
+    }
+    f.lift = lift;
+    composerwrap.style.transform = lift > 0 ? `translateY(${lift}px)` : '';
     // the middle box: still until then, then into the bubble, wherever that is now (scrolling, resizing)
     const target = itemsEl.querySelector('.userwrap .user') as HTMLElement | null;
     const T = target?.getBoundingClientRect();
