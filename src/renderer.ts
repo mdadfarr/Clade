@@ -1860,26 +1860,47 @@ function overview(): { s: number; tx: number; ty: number } {
   return { s, tx: W / 2 - cx * s, ty: H / 2 - cy * s };
 }
 
-/** Glide the graph view to `to` (zoom on a log scale, the middle point straight), the graph showing as much
- *  as the zoom says (it may start part way into a chat). */
-function glideView(to: { s: number; tx: number; ty: number }, ms = 420): void {
+/** Glide the graph view to `to`, carrying on at the pinch's speed: the zoom (on a log scale) starts at v0
+ *  (d ln zoom / ms, from pinchSpeed) and slows to a stop on `to` (a Hermite curve, never overshooting); the
+ *  middle point follows the same progress. The graph shows as much as the zoom says (it may start part way
+ *  into a chat). Without a usable speed it eases in and out. */
+function glideView(to: { s: number; tx: number; ty: number }, v0 = 0): void {
   stopAnim();
   const W = gsvg.clientWidth, H = gsvg.clientHeight;
   const s0 = view.s, c0 = { x: (W / 2 - view.tx) / s0, y: (H / 2 - view.ty) / s0 };
   const c1 = { x: (W / 2 - to.tx) / to.s, y: (H / 2 - to.ty) / to.s };
+  const D = Math.log(to.s / s0);
+  // the time it takes at that speed, slowing down evenly (twice the distance over the speed), within limits
+  const same = D !== 0 && v0 !== 0 && Math.sign(v0) === Math.sign(D);
+  const T = same ? Math.min(1100, Math.max(260, (2 * D) / v0)) : 420;
+  const m = same ? Math.min(3, (v0 * T) / D) : 0; // start slope as a share of the way (3: the most without overshoot)
   const t0 = performance.now();
   const step = (now: number) => {
-    const u = Math.min(1, (now - t0) / ms);
-    const e = 1 - Math.pow(1 - u, 3);
-    const s = s0 * Math.pow(to.s / s0, e);
-    view.s = s;
-    view.tx = W / 2 - (c0.x + (c1.x - c0.x) * e) * s;
-    view.ty = H / 2 - (c0.y + (c1.y - c0.y) * e) * s;
-    setShown(graphShown(s, ENTER_S, fillS()));
+    const u = Math.min(1, (now - t0) / T);
+    const e = (3 - 2 * u) * u * u + m * u * (1 - u) * (1 - u); // Hermite: 0 -> 1, slope m at the start, 0 at the end
+    const z = s0 * Math.exp(D * e);
+    view.s = z;
+    view.tx = W / 2 - (c0.x + (c1.x - c0.x) * e) * z;
+    view.ty = H / 2 - (c0.y + (c1.y - c0.y) * e) * z;
+    setShown(graphShown(z, ENTER_S, fillS()));
     drawSoon();
     anim = u < 1 ? requestAnimationFrame(step) : 0;
   };
   anim = requestAnimationFrame(step);
+}
+
+// The pinch's recent zooms, to know its speed when the fingers stop.
+let pinchLog: { t: number; ln: number }[] = [];
+function logPinch(z: number): void {
+  const t = performance.now();
+  pinchLog.push({ t, ln: Math.log(z) });
+  pinchLog = pinchLog.filter((p) => t - p.t <= 80);
+}
+/** d ln zoom / ms over the pinch's last ~80 ms of movement. */
+function pinchSpeed(): number {
+  if (pinchLog.length < 2) return 0;
+  const a = pinchLog[0], b = pinchLog[pinchLog.length - 1];
+  return (b.ln - a.ln) / Math.max(16, b.t - a.t);
 }
 
 const centerEl = byId('center');
@@ -2048,7 +2069,9 @@ function zoomGraph(e: WheelEvent): void {
 // was on screen when the move started; it slides to the middle as it grows. fromChat: started by a
 // pinch out of the chat that shows this reply, so ending in the chat just closes the graph.
 let trip: { node: GNode; fx: number; fy: number; fromChat: boolean; other: boolean } | null = null;
-let outOfChat = false; // the pinch now going on came out of a chat: when it stops, the graph glides to its overview
+// A pinch out of a chat hands over to a glide to the overview the moment the graph is fully shown; the rest of
+// that pinch out is taken in by the glide (a pinch in takes the zoom back).
+let gliding = false;
 let pinchEnd: number | undefined;
 let anim = 0;
 // The chat end of a move: the reply's box at twice the graph's closest zoom (or filling the window, if
@@ -2113,18 +2136,14 @@ function animateTrip(to: number, done: () => void): void {
 /** The fingers stopped: finish the move to the nearer end. */
 function settleTrip(): void {
   if (!trip) {
-    // a pinch out of a chat that went all the way into the graph: on to the overview, unless already further out
-    const ov = overview();
-    if (outOfChat && view.s > ov.s * 1.02) glideView(ov);
-    outOfChat = false;
+    gliding = false; // the pinch is over
     return;
   }
   if (settleTo(graphShown(view.s, ENTER_S, fillS())) === 'chat') return animateTrip(fillS(), landInChat);
   if (trip.fromChat) {
     // back to the graph out of the chat: on to the overview (most of the tree)
     trip = null;
-    outOfChat = false;
-    return glideView(overview());
+    return glideView(overview(), pinchSpeed());
   }
   // back to the graph, where the move began
   animateTrip(Math.min(view.s, ENTER_S), () => {
@@ -2136,9 +2155,11 @@ function settleTrip(): void {
 
 function onPinch(e: WheelEvent): void {
   hidePop();
-  stopAnim();
   clearTimeout(pinchEnd);
   pinchEnd = window.setTimeout(settleTrip, PINCH_END_MS);
+  if (gliding && anim && e.deltaY > 0) return; // the glide carries this pinch out on
+  gliding = false;
+  stopAnim();
   if (!graphOpen) {
     if (e.deltaY <= 0 || !graph.nodes.length) return; // pinch in on the chat: nothing closer to show
     const n = (graph.current && byNode.get(graph.current)) || graph.nodes[graph.nodes.length - 1];
@@ -2151,16 +2172,26 @@ function onPinch(e: WheelEvent): void {
     const s = Math.min(fillS(), pinchZoom(view.s, e.deltaY));
     if (s >= fillS()) return landInChat();
     placeTrip(s);
+    logPinch(s);
     if (graphShown(s, ENTER_S, fillS()) >= 1) {
-      outOfChat = trip.fromChat;
+      const out = trip.fromChat;
       trip = null; // fully in the graph: from here a pinch zooms it around the fingers
       setShown(1);
+      if (out) {
+        // out of a chat: on to the overview at the pinch's own speed, as one move
+        const ov = overview();
+        if (s > ov.s * 1.02) {
+          gliding = true;
+          glideView(ov, pinchSpeed());
+        }
+      }
     }
     return;
   }
   const r = gsvg.getBoundingClientRect();
   const s = Math.min(ENTER_S, Math.max(ZOOM_MIN, pinchZoom(view.s, e.deltaY)));
   zoomAt(s, e.clientX - r.left, e.clientY - r.top);
+  logPinch(s);
   if (e.deltaY >= 0 || s < ENTER_S) return;
   // Zoomed in as far as the graph goes, fingers still moving apart: move into the reply under them.
   const hit = nodeAtPoint(e.clientX, e.clientY);
