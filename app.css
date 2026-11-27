@@ -442,7 +442,12 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .midbox { position: absolute; box-sizing: border-box; overflow: hidden; }
 .midbox > .midpart { position: absolute; margin: 0; }
 .midclip { position: absolute; overflow: hidden; }
-.user.flyinner { display: block; max-width: none; padding: 0; border-radius: 0; background: none; }
+.user.flyinner { display: block; max-width: none; width: calc(100% + 1px); padding: 0; border-radius: 0; background: none; }
+/* ASCII bubbles rising from the message box on the first send (renderer.ts diveBubbles) */
+.bubblelayer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 7; pointer-events: none; }
+  50% { transform: translate(var(--sway), calc(var(--rise) * 0.5)) scale(1); }
+  100% { opacity: 0; transform: translate(calc(var(--sway) * -0.5), var(--rise)) scale(1.1); }
+}
 .flyhello { position: absolute; text-align: center; font: var(--hello-weight) var(--hello-size)/1.25 var(--hello-font); color: var(--text-1); letter-spacing: -0.01em; }
 .pane.empty .chat { position: static; }
 .pane.empty .composerwrap { position: absolute; left: 0; right: 0; top: var(--hello-input-top); }

@@ -304,6 +304,8 @@ function artifactCard(parent: HTMLElement, name: string): void {
 // colored by the accent and blended onto the theme's background in app.css (#jelly). A 6-second loop played
 // back to back (the <video loop> attribute). Not shown under a picture wallpaper. ----
 const JELLY = 'assets/jellyfish/clade-jellyfish-mono.mp4';
+/** The video is ASCII art: one character cell is this many video pixels (measured from the file). */
+const JELLY_CELL = { w: 6, h: 11 };
 let jellyOff = 0;
 function updateNewChat(): void {
   const v = fp();
@@ -341,13 +343,15 @@ function updateNewChat(): void {
 
 // ---- the dive: the first message of a new chat. On send the camera dives (CAMERA_MS): the jellyfish (or a
 // picture wallpaper) and the greeting leave through the top. The box that held the message stays still;
-// WAIT_MS after the last visible part of the jellyfish has left the view, it travels (TRAVEL_MS) into the
+// BOX_START_MS after send (or WAIT_MS after the jellyfish has left, if sooner) it travels (TRAVEL_MS) into the
 // message's bubble. The Reply box (the real message box) waits just below the bottom edge; once the middle
 // box's controls have faded it rises, at the jellyfish's average speed where there is time, and lands on the
 // same frame as the middle box (createPane: startDive). Every motion uses one water curve (waterEase). The
 // scene exists only in single-pane mode. ----
 const CAMERA_MS = 1400;
 const WAIT_MS = 200; // after the jellyfish is gone, before the message's box moves (with TRAVEL_MS: 4:13)
+// the boxes do not wait for the jellyfish to be gone: they start at the latest this long after send
+const BOX_START_MS = 500;
 const TRAVEL_MS = 650;
 /** cubic-bezier(x1, 0, x2, 1) as a function of time 0..1. */
 function bezier(x1: number, x2: number): (t: number) => number {
@@ -989,8 +993,8 @@ function createPane(id: string): PaneView {
   // when the message was sent (drawn once, exactly over it), which stays still and then becomes the bubble.
   // Everything is measured from the real layout, the start before anything changes. ----
   type Part = { el: HTMLElement; x: number; y: number; fromBottom: boolean }; // a piece of the middle box, placed in it
-  type DiveStart = { box: DOMRect; radius: number; text: DOMRect; scroll: number; parts: Part[]; hello: { text: string; rect: DOMRect } | null; scene: 'jelly' | 'picture' | '' };
-  type Dive = DiveStart & { raf: number; t0: number; pane: DOMRect; w0: number; goneAt: number; lift: number; layer: HTMLElement; mid: HTMLElement; clip: HTMLElement; inner: HTMLElement; src: Element | null; offset: number; anchor: number; helloEl: HTMLElement | null; shadow: string };
+  type DiveStart = { box: DOMRect; radius: number; text: DOMRect; scroll: number; parts: Part[]; hello: { text: string; rect: DOMRect } | null; typed: string; scene: 'jelly' | 'picture' | '' };
+  type Dive = DiveStart & { raf: number; t0: number; pane: DOMRect; w0: number; goneAt: number; goAt: number; lift: number; layer: HTMLElement; mid: HTMLElement; clip: HTMLElement; inner: HTMLElement; src: Element | null; offset: number; anchor: number; helloEl: HTMLElement | null; shadow: string };
   function measureDive(): DiveStart {
     const box = composer.getBoundingClientRect();
     const at = (e: HTMLElement, fromBottom = false): Part => {
@@ -1008,6 +1012,7 @@ function createPane(id: string): PaneView {
       radius: parseFloat(getComputedStyle(composer).borderTopLeftRadius),
       text: input.getBoundingClientRect(),
       scroll: input.scrollTop,
+      typed: input.value,
       parts,
       hello: h.offsetHeight ? { text: h.textContent ?? '', rect: h.getBoundingClientRect() } : null,
       scene: diveSceneStart(), // before the layout changes, so the jellyfish never starts to fade
@@ -1032,7 +1037,9 @@ function createPane(id: string): PaneView {
     for (const p of d.parts) mid.appendChild(p.el);
     const clip = add(mid, 'div', 'midclip');
     const inner = add(clip, 'div', 'user flyinner');
-    fly = { ...d, raf: 0, t0: performance.now(), pane: P, w0: 0, goneAt: 0, lift: 0, layer, mid, clip, inner, src: null, offset: 0, anchor: -1, helloEl, shadow: getComputedStyle(composer).boxShadow };
+    inner.textContent = d.typed; // until the bubble is in the chat: the box never shows empty
+    diveBubbles(d.box, P);
+    fly = { ...d, raf: 0, t0: performance.now(), pane: P, w0: 0, goneAt: 0, goAt: 0, lift: 0, layer, mid, clip, inner, src: null, offset: 0, anchor: -1, helloEl, shadow: getComputedStyle(composer).boxShadow };
     diveFrame(fly.t0); // the first frame is drawn now, before the new layout is ever painted
   }
   function diveFrame(now: number): void {
@@ -1063,7 +1070,9 @@ function createPane(id: string): PaneView {
         if (f.scene === 'jelly') (byId('jelly').querySelector('video') as HTMLVideoElement).pause(); // nothing of it shows any more
       }
     }
-    const q = f.goneAt ? waterEase((now - f.goneAt - WAIT_MS) / TRAVEL_MS) : 0;
+    // the boxes go BOX_START_MS after send, or WAIT_MS after the scene is gone if that comes first
+    f.goAt = Math.min(f.t0 + BOX_START_MS, f.goneAt ? f.goneAt + WAIT_MS : Infinity);
+    const q = waterEase((now - f.goAt) / TRAVEL_MS);
     // The Reply box: just out of sight below the pane until the middle box's controls are gone, then up so
     // it lands with the middle box. Its way, at the jellyfish's average speed (V per CAMERA_MS), takes
     // CAMERA_MS * D / V; if that does not fit between the controls going and the landing, it starts as the
@@ -1071,9 +1080,9 @@ function createPane(id: string): PaneView {
     const wrapTop = composerwrap.getBoundingClientRect().top - f.lift; // where it sits without the shift
     const D = Math.max(0, P.bottom - wrapTop) + 24; // + the input shadow's reach above the box
     let lift = D;
-    if (f.goneAt) {
-      const landAt = f.goneAt + WAIT_MS + TRAVEL_MS;
-      const start = Math.max(f.goneAt + WAIT_MS + TRAVEL_MS * PARTS_GONE, landAt - (CAMERA_MS * D) / V);
+    {
+      const landAt = f.goAt + TRAVEL_MS;
+      const start = Math.max(f.goAt + TRAVEL_MS * PARTS_GONE, landAt - (CAMERA_MS * D) / V);
       lift = D * (1 - waterEase((now - start) / (landAt - start)));
     }
     f.lift = lift;
@@ -1122,13 +1131,103 @@ function createPane(id: string): PaneView {
     // The text keeps the anchor it had in the box: scrolled to its end, its last line stays at the bottom as
     // the window grows. Measured as a share of the text hidden above, so the start is exact and the end is 0.
     const clipH = parseFloat(c.height), hidden = Math.max(0, f.inner.offsetHeight - clipH);
-    if (f.anchor < 0 && target) f.anchor = hidden > 0 ? Math.min(1, (f.scroll + f.offset) / hidden) : 0;
+    // a text field that was not scrolled keeps its first line at the top (sub-pixel line-height differences
+    // between the field and the bubble must not push the first words out of the window)
+    if (f.anchor < 0 && target) f.anchor = hidden > 0 && f.scroll > 1 ? Math.min(1, (f.scroll + f.offset) / hidden) : 0;
     f.inner.style.transform = `translateY(${-hidden * Math.max(0, f.anchor)}px)`;
     // while it travels, the box is clipped more and more like the chat it goes into
     const M = messages.getBoundingClientRect();
     f.layer.style.clipPath = `inset(${lerp(0, M.top - P.top, q)}px ${lerp(0, P.right - M.right, q)}px ${lerp(0, P.bottom - M.bottom, q)}px ${lerp(0, M.left - P.left, q)}px)`;
-    if (cam >= 1 && f.goneAt && now - f.goneAt >= WAIT_MS + TRAVEL_MS) return endDive();
+    if (cam >= 1 && now - f.goAt >= TRAVEL_MS) return endDive();
     f.raf = requestAnimationFrame(diveFrame);
+  }
+  /** ASCII bubbles rise from the message box as the camera dives, drawn in the jellyfish's own character grid:
+   *  the video is ASCII art in cells of JELLY_CELL video pixels, shown with object-fit: cover, so one cell on
+   *  screen is that times the video's scale, and the grid starts where the video's does. Each bubble is a
+   *  circle sampled per cell into the video's brightness ramp (small ones are one 'o' or '.'), in the accent. */
+  function diveBubbles(box: DOMRect, P: DOMRect): void {
+    const E = JELLY_EDGES;
+    const jl = byId('jelly');
+    const vw = jl.offsetWidth || window.innerWidth, vh = jl.offsetHeight || window.innerHeight;
+    const s = Math.max(vw / E.width, vh / E.height);
+    const cw = JELLY_CELL.w * s, ch = JELLY_CELL.h * s;
+    const J = jl.getBoundingClientRect();
+    const ox = (((J.left + (vw - E.width * s) / 2 - P.left) % cw) + cw) % cw;
+    const oy = (((J.top + (vh - E.height * s) / 2 - P.top) % ch) + ch) % ch;
+    const canvas = add(el, 'canvas', 'bubblelayer') as HTMLCanvasElement;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(P.width * dpr);
+    canvas.height = Math.round(P.height * dpr);
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    const family = 'Menlo, Monaco, "DejaVu Sans Mono", monospace';
+    ctx.font = `100px ${family}`;
+    ctx.font = `${(cw * 100) / ctx.measureText('o').width}px ${family}`; // one glyph advance = one cell
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#C6623F';
+    const RAMP = ' .:;otX%#@';
+    type B = { x: number; y: number; r: number; rise: number; sway: number; phase: number; delay: number; dur: number };
+    const bubbles: B[] = [];
+    for (let i = 0; i < 22; i++) {
+      const big = i < 4; // a few rings, the rest single characters
+      bubbles.push({
+        x: box.left - P.left + Math.random() * box.width,
+        y: box.top - P.top + Math.random() * box.height * 0.5,
+        r: big ? cw * (1.6 + Math.random() * 1.6) : cw * (0.15 + Math.random() * 0.5),
+        rise: 160 + Math.random() * 320,
+        sway: cw * (1 + Math.random() * 2.5),
+        phase: Math.random() * Math.PI * 2,
+        delay: Math.random() * 500,
+        dur: 1500 + Math.random() * 900,
+      });
+    }
+    const t0 = performance.now();
+    const end = Math.max(...bubbles.map((b) => b.delay + b.dur));
+    const frame = (now: number) => {
+      const t = now - t0;
+      if (t > end || !canvas.isConnected) return canvas.remove();
+      const cells = new Map<number, number>(); // cell -> brightness 0..1, the brightest bubble wins
+      const put = (cx: number, cy: number, v: number) => {
+        const k = cy * 4096 + cx;
+        if (v > (cells.get(k) ?? 0)) cells.set(k, v);
+      };
+      for (const b of bubbles) {
+        const p = (t - b.delay) / b.dur;
+        if (p <= 0 || p >= 1) continue;
+        const e = 1 - (1 - p) * (1 - p); // slows as it nears the top
+        const x = b.x + Math.sin(b.phase + p * 5) * b.sway;
+        const y = b.y - b.rise * e;
+        const r = b.r * (0.8 + 0.3 * p);
+        const fade = Math.min(1, p * 6) * Math.min(1, (1 - p) * 3);
+        const col = Math.round((x - ox) / cw), row = Math.round((y - oy) / ch);
+        if (r < cw * 0.45) {
+          put(col, row, (r < cw * 0.3 ? 0.15 : 0.45) * fade); // '.' or 'o'
+          continue;
+        }
+        // a ring: each cell's distance to the circle's edge, brighter on the upper left like a highlight
+        const n = Math.ceil(r / cw) + 1, m = Math.ceil(r / ch) + 1;
+        for (let dy = -m; dy <= m; dy++)
+          for (let dx = -n; dx <= n; dx++) {
+            const px = ox + (col + dx) * cw - x, py = oy + (row + dy) * ch - y;
+            const d = Math.hypot(px, py);
+            const edge = 1 - Math.abs(d - r) / (cw * 0.9);
+            if (edge <= 0) continue;
+            const lit = 0.55 + 0.3 * Math.max(0, (-px - py) / (d || 1));
+            put(col + dx, row + dy, edge * lit * fade);
+          }
+      }
+      ctx.clearRect(0, 0, P.width, P.height);
+      for (const [k, v] of cells) {
+        const c = RAMP[Math.min(RAMP.length - 1, Math.round(v * (RAMP.length - 1)))];
+        if (c === ' ') continue;
+        const cx = k % 4096, cy = Math.floor(k / 4096);
+        ctx.globalAlpha = Math.min(1, 0.35 + v);
+        ctx.fillText(c, ox + cx * cw, oy + cy * ch);
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
   }
   function endDive(): void {
     if (!fly) return;
