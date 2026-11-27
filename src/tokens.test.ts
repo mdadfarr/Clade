@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ACCENT_NAMES, ACCENTS, BACKGROUNDS, BASE } from './themes';
+import { ACCENT_NAMES, ACCENTS, BASE } from './themes';
 import { DEFAULT_DESIGN, designOverrides, parseDesign } from './design';
 
 const root = path.join(__dirname, '..');
@@ -89,8 +89,7 @@ test('no glass, blur, glows or gradients anywhere; the input box has the only sh
   assert.match(css, /\.composer \{[^}]*box-shadow: var\(--input-shadow\)/);
 });
 
-test('background: two presets in Settings (the themes); an old "claude" preset still reads; pictures are checked', () => {
-  assert.deepStrictEqual(BACKGROUNDS.map((b) => b.id), ['ivory', 'dark']);
+test('background: the theme decides it; an old saved preset ("theme", "claude") still reads; pictures are checked', () => {
   const ok = (background: unknown) => parseDesign(JSON.stringify({ ...DEFAULT_DESIGN, background })).background;
   assert.deepStrictEqual(ok({ preset: 'claude' }), { preset: 'claude' });
   assert.deepStrictEqual(ok({ picture: 'sea view.JPG' }), { picture: 'sea view.JPG' });

@@ -36,13 +36,6 @@ export const IVORY_V2: { light: Surface; dark: Surface } = {
   dark: { background: '#262624', surface: '#1f1e1d', raised: '#30302e', border: '#42413e', text: '#faf9f5', mutedText: '#c2c0b6', userBubble: '#141413', userText: '#faf9f5', codeBackground: '#1f1e1d' },
 };
 
-// The background presets in Settings: the two themes' own backgrounds (picking one sets the theme too).
-// A picture of the user's own is the third choice (design.json "background").
-export const BACKGROUNDS = [
-  { id: 'ivory', label: 'Ivory', color: '#ffffff', theme: 'light' },
-  { id: 'dark', label: 'Dark', color: '#191919', theme: 'dark' },
-] as const;
-
 // The liquid-glass surfaces (never shipped; a file written while testing them counts as its accent).
 export const GLASS: { light: Surface; dark: Surface } = {
   light: { background: '#f0eee6', surface: '#f7f5ef', raised: '#e7e4da', border: '#dad6ca', text: '#1a1915', mutedText: '#5e5d59', userBubble: '#e7e4da', userText: '#5e5d59', codeBackground: '#e6e4dd' },

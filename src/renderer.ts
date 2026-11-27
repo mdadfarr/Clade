@@ -1940,7 +1940,6 @@ interface Looks {
   now: { accent: string } | 'custom';
   accent: string; // the accent whose tokens the page uses
   accents: { id: string; label: string; fill: string; fillLight: string }[];
-  backgrounds: { id: string; label: string; color: string }[]; // the color presets of the Background row
   overrides: Record<string, string>; // CSS variables design.json sets over tokens.css
 }
 let looks: Looks | null = null;
@@ -2047,31 +2046,6 @@ function drawThemeSwitch(parent: HTMLElement, labels: string[]): void {
   wireBounce(s, 'theme', THEME_IDS, 1.4);
 }
 
-/** Background: two color swatches (Ivory, Dark; each sets the theme too) and a picture of
- *  the user's own (copied into backgrounds/ in the project). A click sends only a stored name. */
-function drawBackgroundRow(row: (title: string, hint: string) => HTMLElement): void {
-  if (!looks) return;
-  const pic: string = designNow?.background?.picture ?? '';
-  const now = pic ? 'picture' : themeNow === 'dark' ? 'dark' : 'ivory';
-  const r = row('Background', pic ? `Picture: backgrounds/${pic}` : '');
-  const dots = add(r, 'div', 'lookdots');
-  for (const b of looks.backgrounds) {
-    const d = add(dots, 'button', 'lookdot bgdot' + (now === b.id ? ' on' : '')) as HTMLButtonElement;
-    d.style.background = b.color;
-    d.title = b.label;
-    d.setAttribute('aria-label', `Background ${b.label}`);
-    d.addEventListener('click', () => api.designSet({ background: b.id }));
-  }
-  const p = add(r, 'button', 'setlink');
-  p.textContent = pic ? 'Other picture…' : 'Picture…';
-  p.addEventListener('click', () => api.designSet({ pickBackground: true }));
-  if (pic) {
-    const x = add(r, 'button', 'setlink');
-    x.textContent = 'Remove';
-    x.addEventListener('click', () => api.designSet({ background: 'none' }));
-  }
-}
-
 function drawSettings(): void {
   const sheet = byId('sheet');
   sheet.replaceChildren();
@@ -2112,7 +2086,6 @@ function drawSettings(): void {
   rl.title = 'Default accent (Claude), System. Sizes, fonts and panels stay as they are.';
   rl.addEventListener('click', () => api.designSet({ resetLook: true }));
   drawLookRows(row);
-  drawBackgroundRow(row);
   const zoom = row('Text size', 'Cmd+Plus, Cmd+Minus, Cmd+0');
   seg(zoom, [['-1', '−'], ['0', `${Math.round(opts.zoom * 100)}%`], ['1', '+']], '', (d) => api.zoom(+d));
   select(row('Mode', 'What new chats start in.'), [['', 'Default'], ...MODE_NAMES.map(([mid, label]) => [mid, label] as [string, string])], opts.mode, (mode) => api.setOptions('', { mode }));
@@ -2126,6 +2099,11 @@ function drawSettings(): void {
     b.addEventListener('click', click);
   };
   btn('Change folder…', () => api.changeFolder());
+  // The wallpaper: a picture of the user's own (copied into backgrounds/ in the project) in place of the
+  // jellyfish; Remove goes back to the jellyfish. The background otherwise always follows the theme.
+  const pic: string = designNow?.background?.picture ?? '';
+  btn('Change wallpaper…', () => api.designSet({ pickBackground: true }));
+  if (pic) btn('Remove wallpaper', () => api.designSet({ background: 'none' }));
   btn('Reset design', () => api.resetDesign());
   btn('Done', () => openSettings(false));
   // Not built yet, said plainly so nobody looks for it.
@@ -2229,7 +2207,6 @@ function drawAccountMenu(): void {
     return r;
   };
   drawLookRows(flyRow);
-  drawBackgroundRow(flyRow);
   drawUsage(m);
   item('Get help', () => {
     closeAccountMenu();

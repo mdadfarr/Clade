@@ -490,16 +490,12 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 .themeseg button + button { border-left: 0; box-shadow: inset 1px 0 0 var(--border); } /* the divider takes no width: equal shares at rest */
 .setlater { margin: 18px 0 4px; font-size: var(--small-size); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-2); }
 .setlaterlist { margin: 0; padding-left: 1.2em; color: var(--text-2); }
-.lookdot.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-text); }
-.lookdots { display: flex; flex-wrap: wrap; gap: 8px; }
 /* the accent bar: 9 blocks edge to edge, only the bar's outer corners round. The hovered block's width
    (flex-grow) is sprung by renderer.ts; the bar's own size never changes. */
 .accbar { display: flex; width: 270px; height: 26px; flex-shrink: 0; border-radius: var(--r-small); overflow: hidden; }
 .flyrow .accbar { width: 100%; }
 .accblock { flex: 1 1 0; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; cursor: pointer; outline: none; }
 .accblock:focus-visible { box-shadow: inset 0 0 0 2px var(--text-1); }
-.lookdot.bgdot { border-radius: 6px; }
-.lookdot { width: 20px; height: 20px; padding: 0; border: 1px solid rgba(127,127,127,0.35); border-radius: 50%; cursor: pointer; }
 .setlink { margin-left: 10px; padding: 0; border: 0; background: none; color: var(--text-2); font-size: var(--small-size); text-decoration: underline; cursor: pointer; }
 .setlink:hover { color: var(--text-1); }
 .setbtn, .setrow select { padding: 5px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }

@@ -280,7 +280,7 @@ If the file is invalid the app keeps the old design and shows an error.
   background (\`"claude"\` is an old name for the same); \`{ "picture": "sea.jpg" }\` shows a picture from the project's
   \`backgrounds/\` folder (png, jpg, webp or gif, a plain file name). To use a
   new picture, put the file in \`backgrounds/\` first. The user can also pick one in
-  Settings > Background.
+  Settings > Change wallpaper.
 - Colors are hex only: "#1f63b5" or "#abc". Every color has a light and a dark
   value; the user's theme picks one.
 - Readability is checked. \`text\`, \`mutedText\` and every tone must have a

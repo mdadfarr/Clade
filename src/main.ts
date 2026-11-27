@@ -9,7 +9,7 @@ import { CLAUDE_MD, MD_END, MD_OLD_MARKER, MD_START } from './claude-md';
 import { buildChats } from './chats';
 import { artifactName, mergeAllow } from './artifacts';
 import { registerArtifactScheme, startArtifacts } from './artifact-host';
-import { ACCENT_NAMES, ACCENTS, applyLook, BACKGROUNDS, BASE, DEFAULT_LOOK, isAccentName, matchLook } from './themes';
+import { ACCENT_NAMES, ACCENTS, applyLook, BASE, DEFAULT_LOOK, isAccentName, matchLook } from './themes';
 import { applySettings, DEFAULT_SETTINGS, Effort, clearBoxKeys, effortInText, MAX_MODE_PRESSES, modelInBanner, Mode, modeInText, MODES, parseSettings, Settings, startFlags, stopScreen, validModel, zoomStep } from './settings';
 import { addSkill, listSkills, mergeSkillSwitch } from './skills';
 import { Account, NO_NETWORK_PROFILE, parseAuthStatus, UNKNOWN } from './account';
@@ -76,7 +76,7 @@ function sendPicture(): void {
   const mime = PICTURE_TYPES[name.slice(name.lastIndexOf('.') + 1).toLowerCase()];
   win?.webContents.send('bg-picture', new Uint8Array(fs.readFileSync(file)), mime);
 }
-/** Settings > Background > Picture: the user picks an image; a copy goes into backgrounds/ in the project. */
+/** Settings > Change wallpaper: the user picks an image; a copy goes into backgrounds/ in the project. */
 async function pickPicture(): Promise<void> {
   if (!win) return;
   const r = await dialog.showOpenDialog(win, { title: 'Choose a background picture', properties: ['openFile'], filters: [{ name: 'Pictures', extensions: Object.keys(PICTURE_TYPES) }] });
@@ -102,7 +102,6 @@ function looks(theme: 'light' | 'dark') {
     now,
     accent: now === 'custom' ? (current.look?.accent ?? DEFAULT_LOOK.accent) : now.accent, // which accent tokens to use
     accents: ACCENT_NAMES.map((id) => ({ id, label: ACCENTS[id].label, fill: ACCENTS[id].fill, fillLight: ACCENTS[id].fillLight ?? ACCENTS[id].fill })),
-    backgrounds: BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, color: b.color })),
     overrides: designOverrides(current, theme), // what design.json sets over tokens.css
   };
 }
@@ -1236,12 +1235,7 @@ app.whenReady().then(async () => {
       const accent = isAccentName(lk.accent) ? lk.accent : now.accent;
       next = applyLook(next, { accent });
     }
-    // Background: a preset (Ivory or Dark, which sets the theme too), or a picture the user picks.
-    const bg = typeof o.background === 'string' ? BACKGROUNDS.find((b) => b.id === o.background) : undefined;
-    if (bg) {
-      next.theme = bg.theme;
-      delete next.background;
-    }
+    // The wallpaper: a picture the user picks, or none (the background then follows the theme).
     if (o.background === 'none') delete next.background; // remove the picture, keep the theme
     if (o.pickBackground === true) return void pickPicture();
     if (o.resetLook === true) {
