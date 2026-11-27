@@ -203,6 +203,7 @@ interface PaneView {
   addFiles(more: Chip[]): void;
   screenLines(): string[];
   showReply(reply: string): void;
+  replyInView(): string; // the reply the user is reading (id), '' if none
   quote(shown: HTMLElement, text: string): void;
   theme(d: any, theme: 'light' | 'dark'): void;
   termSize(): { cols: number; rows: number };
@@ -1592,6 +1593,16 @@ function createPane(id: string): PaneView {
     pickFiles,
     addFiles,
     screenLines,
+    replyInView() {
+      // the reply across the upper third of the chat area (where the eye reads), else the one nearest above it
+      const line = messages.getBoundingClientRect().top + messages.clientHeight / 3;
+      let best = '';
+      for (const g of Array.from(itemsEl.querySelectorAll<HTMLElement>(':scope > .reply'))) {
+        if (g.getBoundingClientRect().top > line) break;
+        best = g.dataset.reply ?? best;
+      }
+      return best || (itemsEl.querySelector<HTMLElement>(':scope > .reply')?.dataset.reply ?? '');
+    },
     showReply(reply) {
       wantReply = reply;
       scrollUntil = Date.now() + 15000;
@@ -1753,6 +1764,7 @@ byId('artgrip').addEventListener('pointerdown', (down) => {
 let graph: GraphData = { nodes: [], current: null, session: '', error: null };
 let byNode = new Map<string, GNode>();
 let graphOpen = false;
+let lit: string | null = null; // the node lit in the graph when not the pane's last reply: the one a pinch came out of
 const view = { s: 1, tx: 0, ty: 0 }; // screen = world * s + t
 const NW = 132; // node size and spacing, world units
 const NH = 26;
@@ -1847,7 +1859,7 @@ function drawGraph(): void {
       }
     }
     if (!seen(p.x, p.y, p.x + NW, p.y + NH)) continue;
-    const g = svg(boxes, 'g', { class: 'gnode' + (n.id === graph.current ? ' current' : paneSpots.has(n.id) ? ' here' : ''), 'data-node': n.id });
+    const g = svg(boxes, 'g', { class: 'gnode' + (n.id === (lit ?? graph.current) ? ' current' : paneSpots.has(n.id) ? ' here' : ''), 'data-node': n.id });
     svg(g, 'rect', { x: p.x, y: p.y, width: NW, height: NH, rx: 7 });
     svg(g, 'text', { x: p.x + 10, y: p.y + 17 }).textContent = shortLabel(n.label || '…');
   }
@@ -1871,7 +1883,8 @@ function overview(): { s: number; tx: number; ty: number } {
   const x0 = Math.min(...ps.map((p) => p.x)), x1 = Math.max(...ps.map((p) => p.x)) + NW;
   const y0 = Math.min(...ps.map((p) => p.y)) - (trees.length > 1 ? 32 : 0), y1 = Math.max(...ps.map((p) => p.y)) + NH; // tree titles above
   const s = Math.min(1, Math.max(ZOOM_MIN, Math.min((W - 2 * M) / (x1 - x0), (H - 2 * M) / (y1 - y0))));
-  const n = (graph.current && byNode.get(graph.current)) || graph.nodes[graph.nodes.length - 1];
+  const cur = lit ?? graph.current;
+  const n = (cur && byNode.get(cur)) || graph.nodes[graph.nodes.length - 1];
   const p = at(n);
   // the middle: the graph's, or the current reply's if the graph is wider or taller than the view
   const mid = (lo: number, hi: number, at: number, half: number) => (hi - lo <= 2 * half ? (lo + hi) / 2 : Math.min(hi - half, Math.max(lo + half, at)));
@@ -1934,6 +1947,7 @@ function setShown(t: number, hideChat = false): void {
 
 function openGraph(on: boolean): void {
   endTrip();
+  lit = null;
   graphOpen = on;
   gview.hidden = !on;
   hidePop();
@@ -2010,16 +2024,16 @@ function showPop(n: GNode): void {
   });
   const p = at(n);
   // to the right of the node, so it hides no other reply in the same column
-  gpop.style.left = `${gsvg.getBoundingClientRect().left - gview.getBoundingClientRect().left + (p.x + NW) * view.s + view.tx + 8}px`;
+  gpop.style.left = `${gsvg.getBoundingClientRect().left - gview.getBoundingClientRect().left + (p.x + NW) * view.s + view.tx - 1}px`; // touching the node, no gap to cross
   gpop.style.top = `${gsvg.getBoundingClientRect().top - gview.getBoundingClientRect().top + p.y * view.s + view.ty}px`;
   gpop.hidden = false;
 }
-const popLater = () => {
-  clearTimeout(popTimer);
-  popTimer = window.setTimeout(hidePop, 250);
-};
-gpop.addEventListener('pointerenter', () => clearTimeout(popTimer));
-gpop.addEventListener('pointerleave', popLater);
+// It shows only while the pointer is on its node, or on the popup itself (which touches the node, so the
+// pointer can go into it for "Branch from here"); anywhere else it closes at once.
+gpop.addEventListener('pointerleave', (e) => {
+  const to = e.relatedTarget as Node | null;
+  if (!(to instanceof Element && to.closest('#graphsvg') && nodeAtPoint(e.clientX, e.clientY) === popNode)) hidePop();
+});
 
 /** The node under a screen point (hit test in graph space, so redraws under the pointer do not matter). */
 function nodeAtPoint(clientX: number, clientY: number): GNode | null {
@@ -2037,9 +2051,11 @@ gsvg.addEventListener('pointermove', (e) => {
   if (drag) return;
   const n = nodeAtPoint(e.clientX, e.clientY);
   if (n) showPop(n);
-  else if (popNode) popLater();
+  else if (popNode) hidePop();
 });
-gsvg.addEventListener('pointerleave', () => popNode && popLater());
+gsvg.addEventListener('pointerleave', (e) => {
+  if (popNode && !(e.relatedTarget instanceof Node && gpop.contains(e.relatedTarget))) hidePop();
+});
 
 // Pan by dragging; a press without a drag on a node is a click.
 let drag: { x: number; y: number; tx: number; ty: number; node: GNode | null; moved: boolean } | null = null;
@@ -2183,8 +2199,11 @@ function onPinch(e: WheelEvent): void {
   stopAnim();
   if (!graphOpen) {
     if (e.deltaY <= 0 || !graph.nodes.length) return; // pinch in on the chat: nothing closer to show
-    const n = (graph.current && byNode.get(graph.current)) || graph.nodes[graph.nodes.length - 1];
+    // the reply being read when the pinch began: the graph comes out of it, and it is the one lit
+    const reading = fp()?.replyInView() ?? '';
+    const n = graph.nodes.find((x) => x.reply === reading) ?? ((graph.current && byNode.get(graph.current)) || graph.nodes[graph.nodes.length - 1]);
     openGraph(true); // ends any old trip; the view is laid out from here on
+    lit = n.id;
     pinchEnd = window.setTimeout(settleTrip, PINCH_END_MS);
     trip = { node: n, fx: gsvg.clientWidth / 2, fy: gsvg.clientHeight / 2, fromChat: true, other: false };
     placeTrip(fillS()); // starts as the chat: this reply's box fills the window, graph not shown yet
