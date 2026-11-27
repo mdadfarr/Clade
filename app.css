@@ -434,17 +434,16 @@ svg.wires { position: absolute; left: 0; top: 0; display: block; pointer-events:
 /* The empty new-chat screen: the heading over the input box, both centered; the box from about y 463
    (DESIGN.md). The jellyfish play behind (#jelly). */
 .hello { display: none; }
-/* the dive: the box keeps its contents unscaled while its size changes (controls stay at the bottom; the
-   placeholder comes in as the text leaves); the sent text flies on a copy above everything, then the real
-   bubble takes its place */
-.composer.morph { overflow: hidden; }
-.composer.morph .controls { margin-top: auto; }
-.composer.morph .input::placeholder { color: color-mix(in srgb, var(--text-3) calc(var(--morph-p, 1) * 100%), transparent); }
+/* the dive (renderer.ts startDive): the chat area waits hidden but laid out (its bubble is measured), the
+   pane clips instead of scrolling; the middle box is drawn on .flylayer: real sizes, never scaled */
+.pane.dive { overflow: clip; }
+.pane.dive .messages { visibility: hidden; }
 .flylayer { position: absolute; inset: 0; z-index: 8; pointer-events: none; overflow: hidden; }
-.flyghost { position: absolute; box-sizing: border-box; overflow: hidden; border-radius: var(--r-bubble); }
+.midbox { position: absolute; box-sizing: border-box; overflow: hidden; }
+.midbox > .midpart { position: absolute; margin: 0; }
+.midclip { position: absolute; overflow: hidden; }
 .user.flyinner { display: block; max-width: none; padding: 0; border-radius: 0; background: none; }
-.flyhide { visibility: hidden; }
-.flyhello { position: absolute; top: 0; text-align: center; font: var(--hello-weight) var(--hello-size)/1.25 var(--hello-font); color: var(--text-1); letter-spacing: -0.01em; }
+.flyhello { position: absolute; text-align: center; font: var(--hello-weight) var(--hello-size)/1.25 var(--hello-font); color: var(--text-1); letter-spacing: -0.01em; }
 .pane.empty .chat { position: static; }
 .pane.empty .composerwrap { position: absolute; left: 0; right: 0; top: var(--hello-input-top); }
 .pane.empty .hello { display: block; position: absolute; left: 24px; right: 24px; bottom: calc(100% + var(--hello-gap)); text-align: center;

@@ -339,31 +339,57 @@ function updateNewChat(): void {
   video.addEventListener('playing', () => box.classList.add('ready'));
 })();
 
-// ---- the dive: the first message of a new chat. In one smooth motion (DIVE_MS, eased in and out) the
-// scene behind (the jellyfish, or a picture wallpaper) slides up and off like a camera sinking past it, the
-// message box moves and reshapes into its place at the bottom, and the sent text flies into its bubble
-// (createPane: startDive). The scene exists only in single-pane mode. ----
-const DIVE_MS = 800;
-const diveEase = (t: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, t)));
+// ---- the dive: the first message of a new chat. One tall underwater scene: the camera starts on the
+// jellyfish, and the Reply box (the real message box) waits one view further down. On send the camera dives
+// (CAMERA_MS): the jellyfish (or a picture wallpaper) and the greeting leave through the top while the Reply
+// box comes up from the bottom edge, all by the same distance on every frame. The box that held the
+// message stays still; WAIT_MS after the last visible part of the jellyfish has left the view, it travels
+// (TRAVEL_MS) into the message's bubble (createPane: startDive). The scene exists only in single-pane mode. ----
+const CAMERA_MS = 1400;
+const WAIT_MS = 200; // after the jellyfish is gone, before the message's box moves (with TRAVEL_MS: 4:13)
+const TRAVEL_MS = 650;
+const easeInOutCubic = (t: number) => {
+  const x = Math.min(1, Math.max(0, t));
+  return x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2;
+};
 const lerp = (a: number, b: number, p: number) => a + (b - a) * p;
-/** Starts the scene's part; false when there is none (split panes). */
-function diveSceneStart(): boolean {
-  if (document.body.classList.contains('multi')) return false;
+/** Starts the scene's part: what moves with the camera behind the pane ('' in split panes: nothing). */
+function diveSceneStart(): 'jelly' | 'picture' | '' {
+  if (document.body.classList.contains('multi')) return '';
   if (document.body.dataset.bg === 'picture') {
     // the picture leaves on a copy of itself; under it the page is the plain chat background
     const pic = document.createElement('div');
     pic.id = 'picslide';
     document.body.appendChild(pic);
     document.body.classList.add('picgone');
-  } else document.body.classList.add('diving'); // the jellyfish stays shown and playing (updateNewChat)
-  return true;
+    return 'picture';
+  }
+  document.body.classList.add('diving'); // the jellyfish stays shown and playing (updateNewChat)
+  return 'jelly';
 }
-/** p: 0 (where it was) to 1 (off the top). */
-function diveSceneFrame(p: number): void {
+/** The camera has gone down by d px: the scene goes up by d. */
+function diveSceneMove(d: number): void {
   const jelly = byId('jelly');
-  if (document.body.classList.contains('diving')) jelly.style.transform = `translateY(${-p * jelly.offsetHeight}px)`;
+  if (document.body.classList.contains('diving')) jelly.style.transform = `translateY(${-d}px)`;
   const pic = document.getElementById('picslide');
-  if (pic) pic.style.transform = `translateY(${-p * window.innerHeight}px)`;
+  if (pic) pic.style.transform = `translateY(${-d}px)`;
+}
+/** Whether the scene has left the view, the camera being d px down. The jellyfish: the lowest lit row of
+ * the frame the video shows now (JELLY_EDGES, measured from the video file), through the real cover
+ * scaling of its layer in this window, has crossed the top of the view. The picture: its bottom edge has. */
+function diveSceneGone(kind: 'jelly' | 'picture', d: number): boolean {
+  if (kind === 'picture') return window.innerHeight - d <= 0.5;
+  const box = byId('jelly');
+  const video = box.querySelector('video') as HTMLVideoElement;
+  if (!box.classList.contains('ready') || getComputedStyle(box).display === 'none') return true; // nothing shown
+  const E = JELLY_EDGES;
+  const w = box.offsetWidth, h = box.offsetHeight;
+  const s = Math.max(w / E.width, h / E.height); // object-fit: cover
+  const frame = Math.floor(video.currentTime * E.fps + 1e-3) % E.bottom.length;
+  const row = E.bottom[frame];
+  if (row < 0) return true;
+  const edge = (h - E.height * s) / 2 + (row + 1) * s; // the lowest lit pixel's bottom, from the layer's top
+  return edge - d <= 0;
 }
 function diveSceneEnd(): void {
   document.getElementById('picslide')?.remove();
@@ -409,7 +435,7 @@ function createPane(id: string): PaneView {
   let sent = false; // the user just pressed Enter and the session file has not caught up yet
   let stick = true; // keep the newest message in view unless the user scrolled up
   const isBusy = () => sent || chat.working;
-  let fly: { raf: number; t0: number; pane: DOMRect; w0: number; box: DOMRect; text: DOMRect; scroll: number; scene: boolean; layer: HTMLElement; ghost: HTMLElement; inner: HTMLElement; src: Element | null; hello: HTMLElement | null; helloTop: number; helloDx: number } | null = null;
+  let fly: Dive | null = null; // the first message's dive, while it plays (startDive)
   let picFor: string | null = null; // the chat the picture wallpaper dived away for ('' = its session is not known yet)
 
   // ---- its terminal: hidden by default (off-screen at a real size); Cmd+J shows the focused pane's ----
@@ -543,7 +569,6 @@ function createPane(id: string): PaneView {
     const empty = !chat.items.length && !pending && !isBusy();
     if (empty && fly) endDive();
     if (empty && picFor !== null) clearPicFor();
-    if (fly) itemsEl.querySelector('.userwrap .user')?.classList.add('flyhide'); // the flying copy stands for it
     el.classList.toggle('empty', empty);
     input.placeholder = empty ? 'How can I help?' : 'Ask a follow-up…';
     updateNewChat();
@@ -934,95 +959,137 @@ function createPane(id: string): PaneView {
   }
   input.addEventListener('input', growInput);
 
-  // ---- the dive (see diveSceneStart): measured from the real layout every time, never from fixed sizes ----
-  type DiveStart = { box: DOMRect; text: DOMRect; scroll: number; hello: HTMLElement | null; helloRect: DOMRect | null; scene: boolean };
+  // ---- the dive (see diveSceneStart). Two boxes: the Reply box is the real message box, already in its
+  // final place in the layout and moved one view down; the middle box is what the message box looked like
+  // when the message was sent (drawn once, exactly over it), which stays still and then becomes the bubble.
+  // Everything is measured from the real layout, the start before anything changes. ----
+  type Part = { el: HTMLElement; x: number; y: number; fromBottom: boolean }; // a piece of the middle box, placed in it
+  type DiveStart = { box: DOMRect; radius: number; text: DOMRect; scroll: number; parts: Part[]; hello: { text: string; rect: DOMRect } | null; scene: 'jelly' | 'picture' | '' };
+  type Dive = DiveStart & { raf: number; t0: number; pane: DOMRect; w0: number; goneAt: number; layer: HTMLElement; mid: HTMLElement; clip: HTMLElement; inner: HTMLElement; src: Element | null; offset: number; anchor: number; helloEl: HTMLElement | null; shadow: string };
   function measureDive(): DiveStart {
     const box = composer.getBoundingClientRect();
-    // the typed content: from the first thing in the box (a quote, attachments or the text) to the text's end
-    const first = [q('.quotebox'), q('.chips'), input].find((e) => e.offsetHeight > 0) ?? input;
-    const ir = input.getBoundingClientRect();
-    const top = first.getBoundingClientRect().top;
-    const text = new DOMRect(ir.left, top, ir.width, ir.bottom - top);
+    const at = (e: HTMLElement, fromBottom = false): Part => {
+      const r = e.getBoundingClientRect();
+      const c = e.cloneNode(true) as HTMLElement;
+      c.classList.add('midpart');
+      c.style.width = `${r.width}px`;
+      return { el: c, x: r.left - box.left, y: fromBottom ? box.bottom - r.bottom : r.top - box.top, fromBottom };
+    };
+    // the box's own parts that are not the message's text: the controls row, and quote and attachment cards
+    const parts = [at(q('.controls'), true), ...[q('.quotebox'), q('.chips')].filter((e) => e.offsetHeight > 0).map((e) => at(e))];
     const h = q('.hello');
-    const scene = diveSceneStart(); // before the layout changes, so the jellyfish never starts to fade
-    return { box, text, scroll: input.scrollTop, hello: h.offsetHeight ? (h.cloneNode(true) as HTMLElement) : null, helloRect: h.offsetHeight ? h.getBoundingClientRect() : null, scene };
+    return {
+      box,
+      radius: parseFloat(getComputedStyle(composer).borderTopLeftRadius),
+      text: input.getBoundingClientRect(),
+      scroll: input.scrollTop,
+      parts,
+      hello: h.offsetHeight ? { text: h.textContent ?? '', rect: h.getBoundingClientRect() } : null,
+      scene: diveSceneStart(), // before the layout changes, so the jellyfish never starts to fade
+    };
   }
   function startDive(d: DiveStart): void {
+    if (d.scene === 'picture') picFor = chat.session; // '' until the new chat's file names it
     if (reducedMotion.matches) {
-      // no movement: straight to the end
-      if (d.scene) {
-        diveSceneEnd();
-        if (document.body.classList.contains('picgone')) picFor = chat.session;
-      }
+      if (d.scene) diveSceneEnd(); // no movement: straight to the end
       return;
     }
-    if (d.scene && document.body.classList.contains('picgone')) picFor = chat.session; // '' until the new chat's file names it
-    const layer = add(el, 'div', 'flylayer');
-    const ghost = add(layer, 'div', 'flyghost');
-    const inner = add(ghost, 'div', 'user flyinner');
-    let hello: HTMLElement | null = null;
     const P = el.getBoundingClientRect();
-    if (d.hello && d.helloRect) {
-      hello = add(add(el, 'div', 'flylayer hellolayer'), 'div', 'flyhello');
-      hello.textContent = d.hello.textContent;
-      hello.style.width = `${d.helloRect.width}px`;
+    el.classList.add('dive'); // the chat area waits hidden (an early reply cannot overlap); the pane never scrolls
+    const layer = add(el, 'div', 'flylayer');
+    let helloEl: HTMLElement | null = null;
+    if (d.hello) {
+      helloEl = add(layer, 'div', 'flyhello');
+      helloEl.textContent = d.hello.text;
+      helloEl.style.width = `${d.hello.rect.width}px`;
     }
-    fly = { raf: 0, t0: performance.now(), pane: P, w0: 0, box: d.box, text: d.text, scroll: d.scroll, scene: d.scene, layer, ghost, inner, src: null, hello, helloTop: d.helloRect ? d.helloRect.top - P.top : 0, helloDx: d.helloRect ? d.helloRect.left - (P.left + P.width / 2) : 0 };
-    itemsEl.querySelector('.userwrap .user')?.classList.add('flyhide');
+    const mid = add(layer, 'div', 'midbox');
+    for (const p of d.parts) mid.appendChild(p.el);
+    const clip = add(mid, 'div', 'midclip');
+    const inner = add(clip, 'div', 'user flyinner');
+    fly = { ...d, raf: 0, t0: performance.now(), pane: P, w0: 0, goneAt: 0, layer, mid, clip, inner, src: null, offset: 0, anchor: -1, helloEl, shadow: getComputedStyle(composer).boxShadow };
     diveFrame(fly.t0); // the first frame is drawn now, before the new layout is ever painted
   }
   function diveFrame(now: number): void {
     if (!fly) return;
     const f = fly;
-    const t = (now - f.t0) / DIVE_MS;
-    if (t >= 1) return endDive();
-    const p = diveEase(t);
-    // the box: where it really sits now (styles lifted for the reading, in the same frame: never painted)
-    composer.classList.remove('morph');
-    composer.style.width = composer.style.height = composer.style.marginTop = composer.style.transform = '';
-    const end = composer.getBoundingClientRect();
+    const P = el.getBoundingClientRect();
+    const V = P.height; // one view: how far the camera goes
+    const cam = (now - f.t0) / CAMERA_MS;
+    const d = V * easeInOutCubic(cam);
+    // the camera: the scene and the greeting up, the Reply box up from one view below, all by d
+    if (f.scene) diveSceneMove(d);
+    composerwrap.style.transform = cam < 1 ? `translateY(${V - d}px)` : '';
     // The start stays where it was within this pane: if the pane moves or changes size meanwhile (window,
     // split, chat list), the start goes with it, horizontally from the pane's center, vertically in proportion.
-    const P = el.getBoundingClientRect();
-    if (!f.w0) f.w0 = end.width;
-    const k = end.width / f.w0; // the box's own width changed with the pane: starting widths follow
+    if (!f.w0) f.w0 = composer.offsetWidth;
+    const k = composer.offsetWidth / f.w0;
     const sx = (r: DOMRect) => P.left + P.width / 2 + (r.left - (f.pane.left + f.pane.width / 2)) * k;
-    const sy = (r: DOMRect) => P.top + (r.top - f.pane.top) * (P.height / f.pane.height);
-    const w = lerp(f.box.width * k, end.width, p), h = lerp(f.box.height, end.height, p);
-    const x = lerp(sx(f.box), end.left, p), y = lerp(sy(f.box), end.top, p);
-    composer.classList.add('morph');
-    composer.style.setProperty('--morph-p', String(p));
-    composer.style.width = `${w}px`;
-    composer.style.height = `${h}px`;
-    composer.style.marginTop = `${end.height - h}px`; // the box takes its final room in the layout all along
-    composer.style.transform = `translate(${x - (end.left + (end.width - w) / 2)}px, ${y - (end.bottom - h)}px)`;
-    // the text: from where it was typed to its bubble, wherever that is now (scrolling, resizing, typing)
-    const M = messages.getBoundingClientRect();
-    f.layer.style.clipPath = `inset(${lerp(0, M.top - P.top, p)}px ${lerp(0, P.right - M.right, p)}px ${lerp(0, P.bottom - M.bottom, p)}px ${lerp(0, M.left - P.left, p)}px)`;
-    const target = itemsEl.querySelector('.userwrap .user');
-    if (target) {
-      if (target !== f.src) {
-        f.src = target;
-        f.inner.replaceChildren(...Array.from(target.childNodes).map((n) => n.cloneNode(true)));
+    const sy = (r: DOMRect) => P.top + (r.top - f.pane.top) * (V / f.pane.height);
+    if (f.helloEl && f.hello) {
+      f.helloEl.style.left = `${sx(f.hello.rect) - P.left}px`;
+      f.helloEl.style.top = `${sy(f.hello.rect) - P.top}px`;
+      f.helloEl.style.transform = `translateY(${-d}px)`;
+    }
+    // gone: the last visible part of the scene (or, in a split pane, of the greeting) has left the view
+    if (!f.goneAt) {
+      const gone = f.scene ? diveSceneGone(f.scene, d) : !f.hello || sy(f.hello.rect) + f.hello.rect.height - d <= P.top;
+      if (gone || cam >= 1) {
+        f.goneAt = now;
+        if (f.scene === 'jelly') (byId('jelly').querySelector('video') as HTMLVideoElement).pause(); // nothing of it shows any more
       }
-      const T = target.getBoundingClientRect();
-      const cs = getComputedStyle(target);
-      const g = f.ghost.style;
-      g.left = `${lerp(sx(f.text), T.left, p) - P.left}px`;
-      g.top = `${lerp(sy(f.text), T.top, p) - P.top}px`;
-      g.width = `${lerp(f.text.width * k, T.width, p)}px`;
-      g.height = `${lerp(f.text.height, T.height, p)}px`;
-      g.padding = `${lerp(0, parseFloat(cs.paddingTop), p)}px ${lerp(0, parseFloat(cs.paddingRight), p)}px`;
-      g.background = `color-mix(in srgb, var(--user-bubble) ${(p * 100).toFixed(2)}%, transparent)`;
-      f.inner.style.transform = `translateY(${-f.scroll * (1 - p)}px)`;
     }
-    // the scene and the greeting go up together, the same distance
-    if (f.scene) diveSceneFrame(p);
-    if (f.hello) {
-      const dist = f.scene ? byId('jelly').offsetHeight || window.innerHeight : P.height; // as far as the jellyfish (or the picture) goes
-      f.hello.style.top = `${f.helloTop * (P.height / f.pane.height) - p * dist}px`;
-      f.hello.style.left = `${P.width / 2 + f.helloDx}px`;
+    const q = f.goneAt ? easeInOutCubic((now - f.goneAt - WAIT_MS) / TRAVEL_MS) : 0;
+    // the middle box: still until then, then into the bubble, wherever that is now (scrolling, resizing)
+    const target = itemsEl.querySelector('.userwrap .user') as HTMLElement | null;
+    const T = target?.getBoundingClientRect();
+    const tcs = target ? getComputedStyle(target) : null;
+    if (target && target !== f.src) {
+      f.src = target;
+      f.inner.replaceChildren(...Array.from(target.childNodes).map((n) => n.cloneNode(true)));
+      // where the typed text starts in the bubble (a quote may come first): the box showed only that part
+      const tn = Array.from(target.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && n.textContent);
+      if (tn) {
+        const range = document.createRange();
+        range.selectNodeContents(tn);
+        f.offset = Math.max(0, range.getBoundingClientRect().top - (target.getBoundingClientRect().top + parseFloat(getComputedStyle(target).paddingTop)));
+      }
     }
+    const bx = sx(f.box), by = sy(f.box), bw = f.box.width * k;
+    const x = T ? lerp(bx, T.left, q) : bx, y = T ? lerp(by, T.top, q) : by;
+    const w = T ? lerp(bw, T.width, q) : bw, h = T ? lerp(f.box.height, T.height, q) : f.box.height;
+    const m = f.mid.style;
+    m.left = `${x - P.left}px`;
+    m.top = `${y - P.top}px`;
+    m.width = `${w}px`;
+    m.height = `${h}px`;
+    m.borderRadius = `${lerp(f.radius, tcs ? parseFloat(tcs.borderTopLeftRadius) : f.radius, q)}px`;
+    m.background = `color-mix(in srgb, var(--user-bubble) ${(q * 100).toFixed(2)}%, var(--input-bg))`;
+    // the frame (1 px ring) and the soft shadow thin out: a bubble has neither; the box itself never fades
+    m.boxShadow = `inset 0 0 0 1px color-mix(in srgb, var(--border) ${((1 - q) * 100).toFixed(2)}%, transparent), ${f.shadow.replace(/rgba\(([^)]*?),\s*([\d.]+)\)/, (_, c, a) => `rgba(${c}, ${(+a * (1 - q)).toFixed(4)})`)}`;
+    // the controls and cards are the box's, not the message's: they fade as it travels
+    for (const p of f.parts) {
+      p.el.style.left = `${p.x * k}px`;
+      p.el.style[p.fromBottom ? 'bottom' : 'top'] = `${p.y}px`;
+      p.el.style.opacity = String(1 - Math.min(1, q * 2));
+    }
+    // the text: from the text field's window (scrolled as it was) to the bubble's whole text
+    const tx = f.text.left - f.box.left, ty = f.text.top - f.box.top;
+    const px = tcs ? parseFloat(tcs.paddingLeft) : 0, py = tcs ? parseFloat(tcs.paddingTop) : 0;
+    const c = f.clip.style;
+    c.left = `${lerp(tx * k, px, q)}px`;
+    c.top = `${lerp(ty, py, q)}px`;
+    c.width = `${lerp(f.text.width * k, T ? T.width - 2 * px : f.text.width * k, q)}px`;
+    c.height = `${lerp(f.text.height, T ? T.height - 2 * py : f.text.height, q)}px`;
+    // The text keeps the anchor it had in the box: scrolled to its end, its last line stays at the bottom as
+    // the window grows. Measured as a share of the text hidden above, so the start is exact and the end is 0.
+    const clipH = parseFloat(c.height), hidden = Math.max(0, f.inner.offsetHeight - clipH);
+    if (f.anchor < 0 && target) f.anchor = hidden > 0 ? Math.min(1, (f.scroll + f.offset) / hidden) : 0;
+    f.inner.style.transform = `translateY(${-hidden * Math.max(0, f.anchor)}px)`;
+    // while it travels, the box is clipped more and more like the chat it goes into
+    const M = messages.getBoundingClientRect();
+    f.layer.style.clipPath = `inset(${lerp(0, M.top - P.top, q)}px ${lerp(0, P.right - M.right, q)}px ${lerp(0, P.bottom - M.bottom, q)}px ${lerp(0, M.left - P.left, q)}px)`;
+    if (cam >= 1 && f.goneAt && now - f.goneAt >= WAIT_MS + TRAVEL_MS) return endDive();
     f.raf = requestAnimationFrame(diveFrame);
   }
   function endDive(): void {
@@ -1030,15 +1097,10 @@ function createPane(id: string): PaneView {
     const f = fly;
     fly = null;
     cancelAnimationFrame(f.raf);
-    composer.classList.remove('morph');
-    composer.style.width = composer.style.height = composer.style.marginTop = composer.style.transform = '';
-    composer.style.removeProperty('--morph-p');
-    itemsEl.querySelector('.flyhide')?.classList.remove('flyhide'); // the bubble shows where its copy ends
+    composerwrap.style.transform = '';
+    el.classList.remove('dive'); // the chat shows, its bubble exactly where the middle box ends
     f.layer.remove();
-    f.hello?.parentElement?.remove();
-    if (f.scene) {
-      diveSceneEnd();
-    }
+    if (f.scene) diveSceneEnd();
   }
   function clearPicFor(): void {
     picFor = null;
